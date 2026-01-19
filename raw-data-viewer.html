@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>scrcpy WebSocket Test - Raw Data Viewer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Courier New', monospace;
+            background: #1a1a2e;
+            color: #eee;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: #00d4ff;
+            margin-bottom: 20px;
+        }
+
+        .controls {
+            background: #16213e;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        input,
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            font-size: 14px;
+            margin-right: 10px;
+        }
+
+        input {
+            background: #0f3460;
+            color: white;
+            width: 300px;
+        }
+
+        button {
+            background: #00d4ff;
+            color: #1a1a2e;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #00b8e6;
+        }
+
+        .status {
+            background: #16213e;
+            padding: 15px 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: flex;
+            gap: 30px;
+            flex-wrap: wrap;
+        }
+
+        .status-item {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .status-label {
+            font-size: 11px;
+            opacity: 0.7;
+            margin-bottom: 5px;
+        }
+
+        .status-value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #00d4ff;
+        }
+
+        .log {
+            background: #16213e;
+            padding: 20px;
+            border-radius: 10px;
+            height: 500px;
+            overflow-y: auto;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px 10px;
+            border-left: 3px solid;
+        }
+
+        .log-success {
+            border-color: #00ff88;
+            background: rgba(0, 255, 136, 0.1);
+        }
+
+        .log-error {
+            border-color: #ff0055;
+            background: rgba(255, 0, 85, 0.1);
+        }
+
+        .log-info {
+            border-color: #00d4ff;
+            background: rgba(0, 212, 255, 0.1);
+        }
+
+        .log-warning {
+            border-color: #ffa500;
+            background: rgba(255, 165, 0, 0.1);
+        }
+
+        .hex-dump {
+            background: #0f3460;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-size: 11px;
+        }
+
+        .connected {
+            color: #00ff88;
+        }
+
+        .disconnected {
+            color: #ff0055;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>🔍 scrcpy WebSocket Raw Data Viewer</h1>
+
+        <div class="controls">
+            <input type="text" id="wsUrl" value="ws://localhost:8886" placeholder="WebSocket URL">
+            <button id="connectBtn" onclick="toggleConnection()">Connect</button>
+            <button onclick="clearLog()">Clear Log</button>
+        </div>
+
+        <div class="status">
+            <div class="status-item">
+                <div class="status-label">Connection</div>
+                <div class="status-value" id="connStatus">Disconnected</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">Messages</div>
+                <div class="status-value" id="msgCount">0</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">Binary Frames</div>
+                <div class="status-value" id="frameCount">0</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">Total Data</div>
+                <div class="status-value" id="dataSize">0 KB</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">H264 NAL Units</div>
+                <div class="status-value" id="nalCount">0</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">Last NAL Type</div>
+                <div class="status-value" id="lastNalType">-</div>
+            </div>
+        </div>
+
+        <div class="log" id="log"></div>
+    </div>
+
+    <script>
+        let ws = null;
+        let messageCount = 0;
+        let frameCount = 0;
+        let totalBytes = 0;
+        let nalCount = 0;
+
+        const NAL_TYPES = {
+            0: 'Unspecified',
+            1: 'Coded slice (non-IDR)',
+            2: 'Coded slice partition A',
+            3: 'Coded slice partition B',
+            4: 'Coded slice partition C',
+            5: 'Coded slice (IDR)',
+            6: 'SEI',
+            7: 'SPS (Sequence Parameter Set)',
+            8: 'PPS (Picture Parameter Set)',
+            9: 'Access unit delimiter',
+            10: 'End of sequence',
+            11: 'End of stream',
+            12: 'Filler data'
+        };
+
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            const timestamp = new Date().toLocaleTimeString();
+            entry.innerHTML = `<strong>[${timestamp}]</strong> ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+
+        function updateStats() {
+            document.getElementById('msgCount').textContent = messageCount;
+            document.getElementById('frameCount').textContent = frameCount;
+            document.getElementById('dataSize').textContent = (totalBytes / 1024).toFixed(2) + ' KB';
+            document.getElementById('nalCount').textContent = nalCount;
+        }
+
+        function analyzeH264(data) {
+            const view = new DataView(data);
+            const results = [];
+
+            let offset = 0;
+            while (offset < data.byteLength - 4) {
+                // Look for NAL unit start code: 0x00 00 00 01 or 0x00 00 01
+                let nalStart = -1;
+                let startCodeLength = 0;
+
+                if (offset + 3 <= data.byteLength) {
+                    if (view.getUint32(offset) === 0x00000001) {
+                        nalStart = offset + 4;
+                        startCodeLength = 4;
+                    } else if ((view.getUint32(offset) & 0xFFFFFF00) === 0x00000100) {
+                        nalStart = offset + 3;
+                        startCodeLength = 3;
+                    }
+                }
+
+                if (nalStart !== -1 && nalStart < data.byteLength) {
+                    const nalByte = view.getUint8(nalStart);
+                    const nalType = nalByte & 0x1F;
+                    const nalTypeName = NAL_TYPES[nalType] || `Unknown (${nalType})`;
+
+                    results.push({
+                        offset: offset,
+                        startCodeLength: startCodeLength,
+                        nalType: nalType,
+                        nalTypeName: nalTypeName,
+                        nalByte: nalByte
+                    });
+
+                    nalCount++;
+                    document.getElementById('lastNalType').textContent = `${nalType} (${nalTypeName})`;
+
+                    offset += startCodeLength + 1;
+                } else {
+                    offset++;
+                }
+            }
+
+            return results;
+        }
+
+        function hexDump(data, maxBytes = 64) {
+            const view = new Uint8Array(data);
+            const bytes = Math.min(view.length, maxBytes);
+            let result = '';
+
+            for (let i = 0; i < bytes; i++) {
+                result += view[i].toString(16).padStart(2, '0') + ' ';
+                if ((i + 1) % 16 === 0) result += '\n';
+            }
+
+            if (view.length > maxBytes) {
+                result += `\n... (${view.length - maxBytes} more bytes)`;
+            }
+
+            return result;
+        }
+
+        function toggleConnection() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                disconnect();
+            } else {
+                connect();
+            }
+        }
+
+        function connect() {
+            const url = document.getElementById('wsUrl').value;
+            log(`Connecting to ${url}...`, 'info');
+
+            ws = new WebSocket(url);
+            ws.binaryType = 'arraybuffer';
+
+            ws.onopen = () => {
+                log('✅ WebSocket connected successfully!', 'success');
+                document.getElementById('connStatus').textContent = 'Connected';
+                document.getElementById('connStatus').className = 'connected';
+                document.getElementById('connectBtn').textContent = 'Disconnect';
+            };
+
+            ws.onmessage = (event) => {
+                messageCount++;
+
+                if (typeof event.data === 'string') {
+                    try {
+                        const data = JSON.parse(event.data);
+                        log(`📨 JSON Message: ${JSON.stringify(data, null, 2)}`, 'info');
+
+                        if (data.type === 'deviceInfo' && data.device) {
+                            log(`📱 Device: ${data.device.manufacturer} ${data.device.model} (Android ${data.device.androidVersion})`, 'success');
+                        }
+                    } catch (e) {
+                        log(`⚠️ String message (not JSON): ${event.data}`, 'warning');
+                    }
+                } else if (event.data instanceof ArrayBuffer) {
+                    frameCount++;
+                    totalBytes += event.data.byteLength;
+
+                    log(`🎥 Binary frame #${frameCount}: ${event.data.byteLength} bytes`, 'info');
+
+                    // Analyze H264 NAL units
+                    const nalUnits = analyzeH264(event.data);
+
+                    if (nalUnits.length > 0) {
+                        let nalInfo = `Found ${nalUnits.length} NAL unit(s): `;
+                        nalInfo += nalUnits.map(nal =>
+                            `<span style="color: #00ff88">${nal.nalType}</span> (${nal.nalTypeName})`
+                        ).join(', ');
+                        log(nalInfo, 'success');
+                    } else {
+                        log('⚠️ No H264 NAL start codes found in this frame!', 'warning');
+                    }
+
+                    // Show hex dump
+                    const hexDiv = document.createElement('div');
+                    hexDiv.className = 'hex-dump';
+                    hexDiv.textContent = hexDump(event.data, 64);
+                    document.getElementById('log').appendChild(hexDiv);
+                    document.getElementById('log').scrollTop = document.getElementById('log').scrollHeight;
+
+                    updateStats();
+                }
+            };
+
+            ws.onerror = (error) => {
+                log(`❌ WebSocket error: ${error}`, 'error');
+            };
+
+            ws.onclose = (event) => {
+                log(`🔌 WebSocket closed (code: ${event.code}, reason: ${event.reason || 'none'})`, 'warning');
+                document.getElementById('connStatus').textContent = 'Disconnected';
+                document.getElementById('connStatus').className = 'disconnected';
+                document.getElementById('connectBtn').textContent = 'Connect';
+                ws = null;
+            };
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                log('Disconnecting...', 'info');
+            }
+        }
+
+        log('🚀 Raw Data Viewer ready!', 'success');
+        log('This tool shows exactly what data is being received from the server.', 'info');
+        log('Click Connect to start analyzing...', 'info');
+    </script>
+</body>
+
+</html>

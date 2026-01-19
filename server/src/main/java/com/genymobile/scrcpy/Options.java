@@ -74,11 +74,23 @@ public class Options {
     private boolean listCameraSizes;
     private boolean listApps;
 
-    // Options not used by the scrcpy client, but useful to use scrcpy-server directly
+    // Options not used by the scrcpy client, but useful to use scrcpy-server
+    // directly
     private boolean sendDeviceMeta = true; // send device name and size
     private boolean sendFrameMeta = true; // send PTS so that the client may record properly
     private boolean sendDummyByte = true; // write a byte on start to detect connection issues
     private boolean sendCodecMeta = true; // write the codec metadata before the stream
+
+    // WebSocket server options
+    public static final int SERVER_MODE_SOCKET = 0;
+    public static final int SERVER_MODE_WEBSOCKET = 1;
+    private int serverMode = SERVER_MODE_SOCKET; // default to socket mode
+    private int wsPort = 8886; // WebSocket port
+    private boolean wsListenOnAllInterfaces = true; // Listen on 0.0.0.0 or 127.0.0.1
+
+    // UHID (User-space HID) options for WebSocket mode
+    private boolean mouseUhid = false; // Emulate mouse as HID device
+    private boolean keyboardUhid = false; // Emulate keyboard as HID device
 
     public Ln.Level getLogLevel() {
         return logLevel;
@@ -288,6 +300,46 @@ public class Options {
         return sendCodecMeta;
     }
 
+    public int getServerMode() {
+        return serverMode;
+    }
+
+    public void setServerMode(int mode) {
+        this.serverMode = mode;
+    }
+
+    public int getWSPort() {
+        return wsPort;
+    }
+
+    public void setWSPort(int port) {
+        this.wsPort = port;
+    }
+
+    public boolean getWSListenOnAllInterfaces() {
+        return wsListenOnAllInterfaces;
+    }
+
+    public void setWSListenOnAllInterfaces(boolean listenOnAll) {
+        this.wsListenOnAllInterfaces = listenOnAll;
+    }
+
+    public boolean getMouseUhid() {
+        return mouseUhid;
+    }
+
+    public void setMouseUhid(boolean enable) {
+        this.mouseUhid = enable;
+    }
+
+    public boolean getKeyboardUhid() {
+        return keyboardUhid;
+    }
+
+    public void setKeyboardUhid(boolean enable) {
+        this.keyboardUhid = enable;
+    }
+
     @SuppressWarnings("MethodLength")
     public static Options parse(String... args) {
         if (args.length < 1) {
@@ -297,14 +349,82 @@ public class Options {
         String clientVersion = args[0];
         if (!clientVersion.equals(BuildConfig.VERSION_NAME)) {
             throw new IllegalArgumentException(
-                    "The server version (" + BuildConfig.VERSION_NAME + ") does not match the client " + "(" + clientVersion + ")");
+                    "The server version (" + BuildConfig.VERSION_NAME + ") does not match the client " + "("
+                            + clientVersion + ")");
         }
 
         Options options = new Options();
 
+        // Check for WebSocket mode (simplified argument format)
+        if (args.length > 1 && "web".equalsIgnoreCase(args[1])) {
+            options.setServerMode(SERVER_MODE_WEBSOCKET);
+
+            // For WebSocket mode, configure metadata:
+            // - sendCodecMeta = TRUE to send SPS/PPS (NAL 7/8) - REQUIRED for decoders
+            // - sendFrameMeta = FALSE to skip timestamp headers (NAL 17/18)
+            options.sendCodecMeta = true; // Changed to TRUE for SPS/PPS!
+            options.sendFrameMeta = false;
+            options.sendDummyByte = false;
+            options.sendDeviceMeta = false;
+
+            // Disable audio for WebSocket mode (focus on video only)
+            // Audio capture can interfere with video encoding on some devices
+            // options.audio = false;
+
+            // Disable control for WebSocket mode to prevent resource conflicts
+            // Control can interfere with virtual display and video encoder
+            // options.control = false;
+
+            // Parse WebSocket-specific arguments
+            // Format: <version> web [log_level] [port] [listen_all] [codec]
+            if (args.length > 2) {
+                Ln.Level level = Ln.Level.valueOf(args[2].toUpperCase(Locale.ENGLISH));
+                options.logLevel = level;
+            }
+            if (args.length > 3) {
+                int port = Integer.parseInt(args[3]);
+                options.setWSPort(port);
+            }
+            if (args.length > 4) {
+                boolean listenAll = Boolean.parseBoolean(args[4]);
+                options.setWSListenOnAllInterfaces(listenAll);
+            }
+            if (args.length > 5) {
+                // Codec selection: h264, h265, av1
+                String codecName = args[5].toLowerCase(Locale.ENGLISH);
+                VideoCodec codec = VideoCodec.findByName(codecName);
+                if (codec != null) {
+                    options.videoCodec = codec;
+                    Ln.i("Video codec set to: " + codecName);
+                } else {
+                    Ln.w("Unknown codec '" + codecName + "', using default H264");
+                    options.videoCodec = VideoCodec.H264;
+                }
+            }
+            // UHID options
+            if (args.length > 6) {
+                boolean mouseUhid = Boolean.parseBoolean(args[6]);
+                options.setMouseUhid(mouseUhid);
+            }
+            if (args.length > 7) {
+                boolean keyboardUhid = Boolean.parseBoolean(args[7]);
+                options.setKeyboardUhid(keyboardUhid);
+            }
+
+            Ln.i("WebSocket server mode enabled - port=" + options.getWSPort() +
+                    ", listenAll=" + options.getWSListenOnAllInterfaces() +
+                    ", codec=" + options.videoCodec.getName() +
+                    ", mouseUhid=" + options.getMouseUhid() +
+                    ", keyboardUhid=" + options.getKeyboardUhid());
+
+            return options;
+        }
+
+        // Original key=value parsing for socket mode
         for (int i = 1; i < args.length; ++i) {
             String arg = args[i];
             int equalIndex = arg.indexOf('=');
+
             if (equalIndex == -1) {
                 throw new IllegalArgumentException("Invalid key=value pair: \"" + arg + "\"");
             }
@@ -585,10 +705,10 @@ public class Options {
 
     private static NewDisplay parseNewDisplay(String newDisplay) {
         // Possible inputs:
-        //  - "" (empty string)
-        //  - "<width>x<height>/<dpi>"
-        //  - "<width>x<height>"
-        //  - "/<dpi>"
+        // - "" (empty string)
+        // - "<width>x<height>/<dpi>"
+        // - "<width>x<height>"
+        // - "/<dpi>"
         if (newDisplay.isEmpty()) {
             return new NewDisplay();
         }

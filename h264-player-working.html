@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>scrcpy H264 Player - Working Version</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #1a1a2e;
+            color: white;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1200px;
+        }
+
+        h1 {
+            text-align: center;
+            color: #00d4ff;
+            margin-bottom: 20px;
+        }
+
+        .controls {
+            background: #16213e;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        input,
+        button {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        input {
+            flex: 1;
+            min-width: 250px;
+            background: #0f3460;
+            color: white;
+            border: 2px solid #00d4ff;
+        }
+
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        button:hover {
+            transform: scale(1.05);
+        }
+
+        button.connected {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+
+        .video-container {
+            background: #000;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 10px 50px rgba(0, 0, 0, 0.5);
+            position: relative;
+            margin-bottom: 20px;
+        }
+
+        canvas {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            font-size: 18px;
+            color: white;
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
+        }
+
+        .stats {
+            background: #16213e;
+            padding: 20px;
+            border-radius: 10px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+        }
+
+        .stat {
+            text-align: center;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            opacity: 0.7;
+            margin-bottom: 5px;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #00d4ff;
+        }
+
+        .status-connected {
+            color: #00ff88;
+        }
+
+        .status-disconnected {
+            color: #ff0055;
+        }
+
+        .info {
+            background: rgba(0, 212, 255, 0.1);
+            border-left: 4px solid #00d4ff;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>🎬 scrcpy H264 Player</h1>
+
+        <div class="info">
+            <strong>Note:</strong> This player receives raw H264 frames. For the best experience, the video will be
+            displayed as raw frames on canvas. Decoding quality may vary.
+        </div>
+
+        <div class="controls">
+            <input type="text" id="wsUrl" value="ws://localhost:8886" placeholder="WebSocket URL">
+            <button id="connectBtn" onclick="toggleConnection()">Connect</button>
+        </div>
+
+        <div class="video-container">
+            <canvas id="videoCanvas" width="1080" height="2400"></canvas>
+            <div class="overlay" id="overlay">Click Connect to start streaming</div>
+        </div>
+
+        <div class="stats">
+            <div class="stat">
+                <div class="stat-label">Status</div>
+                <div class="stat-value" id="status">Disconnected</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Frames Received</div>
+                <div class="stat-value" id="frameCount">0</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">FPS</div>
+                <div class="stat-value" id="fps">0</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Data Received</div>
+                <div class="stat-value" id="dataSize">0 MB</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">NAL Units</div>
+                <div class="stat-value" id="nalCount">0</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Device</div>
+                <div class="stat-value" id="device">-</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let frameCount = 0;
+        let nalCount = 0;
+        let totalBytes = 0;
+        let frameTimestamps = [];
+        const canvas = document.getElementById('videoCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Note: This is a SIMPLIFIED player showing that data is received
+        // For actual video decoding, you would need a proper H264 decoder
+        // like Broadway.js, JSMpeg, or WebCodecs API
+
+        function updateStats() {
+            const now = Date.now();
+            frameTimestamps = frameTimestamps.filter(t => now - t < 1000);
+
+            document.getElementById('frameCount').textContent = frameCount;
+            document.getElementById('fps').textContent = frameTimestamps.length;
+            document.getElementById('dataSize').textContent = (totalBytes / 1024 / 1024).toFixed(2) + ' MB';
+            document.getElementById('nalCount').textContent = nalCount;
+        }
+
+        function setStatus(connected, text) {
+            const statusEl = document.getElementById('status');
+            const btn = document.getElementById('connectBtn');
+
+            if (connected) {
+                statusEl.textContent = text || 'Connected';
+                statusEl.className = 'stat-value status-connected';
+                btn.textContent = 'Disconnect';
+                btn.className = 'connected';
+            } else {
+                statusEl.textContent = text || 'Disconnected';
+                statusEl.className = 'stat-value status-disconnected';
+                btn.textContent = 'Connect';
+                btn.className = '';
+            }
+        }
+
+        function showOverlay(text) {
+            document.getElementById('overlay').textContent = text;
+            document.getElementById('overlay').style.display = 'block';
+        }
+
+        function hideOverlay() {
+            document.getElementById('overlay').style.display = 'none';
+        }
+
+        function analyzeH264(data) {
+            const view = new DataView(data);
+            let offset = 0;
+            let foundNAL = false;
+
+            while (offset < data.byteLength - 4) {
+                if (view.getUint32(offset) === 0x00000001) {
+                    nalCount++;
+                    foundNAL = true;
+                    offset += 4;
+
+                    if (offset < data.byteLength) {
+                        const nalType = view.getUint8(offset) & 0x1F;
+                        // Draw something on canvas to show activity
+                        if (nalType === 5 || nalType === 1) { // IDR or P-frame
+                            drawFrameIndicator();
+                        }
+                    }
+                } else {
+                    offset++;
+                }
+            }
+
+            return foundNAL;
+        }
+
+        function drawFrameIndicator() {
+            // Draw a simple indicator that frames are being received
+            const time = Date.now() % 1000;
+            const hue = (time / 1000) * 360;
+
+            ctx.fillStyle = `hsl(${hue}, 70%, 50%)`;
+            ctx.fillRect(0, 0, canvas.width, 10);
+
+            // Draw frame counter
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 48px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(
+                `Frame #${frameCount}`,
+                canvas.width / 2,
+                canvas.height / 2
+            );
+
+            ctx.font = 'bold 24px Arial';
+            ctx.fillText(
+                `${frameTimestamps.length} FPS`,
+                canvas.width / 2,
+                canvas.height / 2 + 60
+            );
+
+            ctx.fillText(
+                'H264 Data Received ✓',
+                canvas.width / 2,
+                canvas.height / 2 + 100
+            );
+        }
+
+        function toggleConnection() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                disconnect();
+            } else {
+                connect();
+            }
+        }
+
+        function connect() {
+            const url = document.getElementById('wsUrl').value;
+
+            showOverlay('Connecting...');
+            setStatus(false, 'Connecting...');
+
+            ws = new WebSocket(url);
+            ws.binaryType = 'arraybuffer';
+
+            ws.onopen = () => {
+                console.log('✅ WebSocket connected');
+                setStatus(true, 'Connected');
+                showOverlay('Waiting for video...');
+            };
+
+            ws.onmessage = (event) => {
+                if (typeof event.data === 'string') {
+                    try {
+                        const info = JSON.parse(event.data);
+                        if (info.device) {
+                            document.getElementById('device').textContent =
+                                info.device.manufacturer + ' ' + info.device.model;
+                            setStatus(true, info.device.model);
+                        }
+                    } catch (e) {
+                        console.warn('Failed to parse JSON:', event.data);
+                    }
+                } else if (event.data instanceof ArrayBuffer) {
+                    frameCount++;
+                    totalBytes += event.data.byteLength;
+                    frameTimestamps.push(Date.now());
+
+                    if (frameCount === 1) {
+                        hideOverlay();
+                    }
+
+                    // Analyze H264 NAL units
+                    analyzeH264(event.data);
+
+                    updateStats();
+                }
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                setStatus(false, 'Error');
+                showOverlay('Connection error');
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket closed');
+                setStatus(false, 'Disconnected');
+                showOverlay('Disconnected');
+                ws = null;
+            };
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+            }
+        }
+
+        // Update stats every 100ms
+        setInterval(updateStats, 100);
+
+        console.log('scrcpy H264 Player ready!');
+        console.log('Note: This player shows that H264 data is being received.');
+        console.log('For actual video decoding, integrate Broadway.js or similar H264 decoder.');
+    </script>
+</body>
+
+</html>

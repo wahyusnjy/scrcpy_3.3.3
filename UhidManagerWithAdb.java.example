@@ -1,0 +1,116 @@
+package com.genymobile.scrcpy.control;
+
+import android.net.LocalSocket;
+import android.net.LocalSocketAddress;
+import com.genymobile.scrcpy.util.Ln;
+
+import java.io.FileDescriptor;
+import java.io.IOException;
+import java.io.OutputStream;
+
+/**
+ * UHID Manager with ADB tunneling fallback for non-root devices
+ */
+public class UhidManagerWithAdb extends UhidManager {
+    
+    private LocalSocket adbSocket;
+    private OutputStream adbOutput;
+    private boolean usingAdbTunnel = false;
+    
+    /**
+     * Initialize UHID with automatic fallback
+     * @param useAdbFirst Try ADB tunneling before direct access
+     */
+    public boolean initialize(boolean useAdbFirst) {
+        if (useAdbFirst) {
+            // Try ADB tunnel first (non-root)
+            if (tryAdbTunnel()) {
+                return true;
+            }
+            // Fallback to direct
+            return tryDirectAccess();
+        } else {
+            // Try direct first (rooted)
+            if (tryDirectAccess()) {
+                return true;
+            }
+            // Fallback to ADB
+            return tryAdbTunnel();
+        }
+    }
+    
+    private boolean tryDirectAccess() {
+        try {
+            // Use parent class implementation
+            // This requires /dev/uhid write permission (root)
+            Ln.i("UHID: Attempting direct access to /dev/uhid");
+            // Test by opening UHID
+            FileDescriptor testFd = openUhidDevice();
+            if (testFd != null) {
+                Ln.i("✅ UHID: Direct access successful (rooted device)");
+                usingAdbTunnel = false;
+                return true;
+            }
+        } catch (Exception e) {
+            Ln.w("UHID: Direct access failed - " + e.getMessage());
+        }
+        return false;
+    }
+    
+    private boolean tryAdbTunnel() {
+        try {
+            Ln.i("UHID: Attempting ADB tunnel connection");
+            
+            // Connect to ADB-forwarded abstract socket
+            adbSocket = new LocalSocket();
+            adbSocket.connect(new LocalSocketAddress(
+                "scrcpy_uhid",
+                LocalSocketAddress.Namespace.ABSTRACT
+            ));
+            
+            adbOutput = adbSocket.getOutputStream();
+            usingAdbTunnel = true;
+            
+            Ln.i("✅ UHID: ADB tunnel connected (non-root mode)");
+            return true;
+            
+        } catch (IOException e) {
+            Ln.w("UHID: ADB tunnel failed - " + e.getMessage());
+            Ln.w("UHID: Make sure to run: adb forward localabstract:scrcpy_uhid /dev/uhid");
+            return false;
+        }
+    }
+    
+    @Override
+    public void writeInput(int id, byte[] data) throws IOException {
+        if (usingAdbTunnel && adbOutput != null) {
+            // Write through ADB tunnel
+            byte[] uhidPacket = buildUhidInput2Req(data).array();
+            adbOutput.write(uhidPacket);
+            adbOutput.flush();
+        } else {
+            // Use direct write (parent implementation)
+            super.writeInput(id, data);
+        }
+    }
+    
+    @Override
+    public void close(int id) throws IOException {
+        super.close(id);
+        
+        if (adbSocket != null) {
+            try {
+                adbSocket.close();
+                Ln.i("UHID: ADB tunnel closed");
+            } catch (IOException e) {
+                Ln.w("Error closing ADB socket", e);
+            }
+        }
+    }
+    
+    public boolean isUsingAdbTunnel() {
+        return usingAdbTunnel;
+    }
+    
+    private native FileDescriptor openUhidDevice() throws IOException;
+}

@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>scrcpy Broadway Player</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
+            color: white;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            width: 100%;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .controls {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            padding: 20px;
+            border-radius: 15px;
+            margin-bottom: 20px;
+            display: flex;
+            gap: 10px;
+        }
+
+        input {
+            flex: 1;
+            padding: 12px 20px;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.05);
+            color: white;
+            font-size: 16px;
+        }
+
+        button {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 10px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .video-container {
+            background: #000;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            margin-bottom: 20px;
+        }
+
+        canvas {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .stats {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 20px;
+            border-radius: 15px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 15px;
+        }
+
+        .stat {
+            text-align: center;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+        }
+
+        .stat-label {
+            font-size: 11px;
+            opacity: 0.7;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .status-ok {
+            color: #00ff88 !important;
+        }
+
+        .status-error {
+            color: #ff0055 !important;
+        }
+
+        .alert {
+            background: rgba(0, 255, 136, 0.2);
+            border: 2px solid rgba(0, 255, 136, 0.5);
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>🎬 scrcpy Broadway Player</h1>
+        <div id="alert" style="display: none;"></div>
+        <div class="controls">
+            <input type="text" id="wsUrl" value="ws://localhost:8886">
+            <button onclick="toggle()">Connect</button>
+        </div>
+        <div class="video-container">
+            <canvas id="canvas" width="720" height="1600"></canvas>
+        </div>
+        <div class="stats">
+            <div class="stat">
+                <div class="stat-label">Status</div>
+                <div class="stat-value" id="status">-</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Frames</div>
+                <div class="stat-value" id="frames">0</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">FPS</div>
+                <div class="stat-value" id="fps">0</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Data</div>
+                <div class="stat-value" id="data">0 MB</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Decoder</div>
+                <div class="stat-value" id="decoder">Loading...</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/broadway-player@1.0.6/dist/Player.js"></script>
+    <script>
+        let ws, player, frames = 0, totalBytes = 0, fpsArr = [];
+        const canvas = document.getElementById('canvas');
+
+        function show(id, text) {
+            document.getElementById('id').textContent = text;
+        }
+
+        function alert(msg) {
+            const a = document.getElementById('alert');
+            a.textContent = msg;
+            a.style.display = 'block';
+            setTimeout(() => a.style.display = 'none', 3000);
+        }
+
+        function initPlayer() {
+            try {
+                player = new Player({
+                    useWorker: true,
+                    workerFile: 'https://cdn.jsdelivr.net/npm/broadway-player@1.0.6/dist/Decoder.js',
+                    webgl: true,
+                    size: { width: 720, height: 1600 }
+                });
+
+                player.canvas = canvas;
+                document.getElementById('decoder').textContent = '✓ Broadway';
+                return true;
+            } catch (e) {
+                console.error('Failed to init player:', e);
+                document.getElementById('decoder').textContent = '✗ Error';
+                alert('❌ Failed to initialize decoder');
+                return false;
+            }
+        }
+
+        function toggle() {
+            if (ws?.readyState === WebSocket.OPEN) {
+                ws.close();
+            } else {
+                connect();
+            }
+        }
+
+        function connect() {
+            if (!initPlayer()) return;
+
+            const url = document.getElementById('wsUrl').value;
+            document.getElementById('status').textContent = 'Connecting';
+
+            ws = new WebSocket(url);
+            ws.binaryType = 'arraybuffer';
+
+            ws.onopen = () => {
+                console.log('✅ Connected');
+                document.getElementById('status').textContent = 'Connected';
+                document.getElementById('status').className = 'stat-value status-ok';
+            };
+
+            ws.onmessage = (e) => {
+                if (typeof e.data === 'string') {
+                    // Device info
+                    try {
+                        const info = JSON.parse(e.data);
+                        if (info.device) {
+                            document.getElementById('status').textContent = info.device.model;
+                        }
+                    } catch { }
+                } else {
+                    // Video data
+                    totalBytes += e.data.byteLength;
+                    frames++;
+                    fpsArr.push(Date.now());
+
+                    // Decode with Broadway
+                    const data = new Uint8Array(e.data);
+                    player.decode(data);
+
+                    if (frames === 1) {
+                        alert('✅ VIDEO STREAMING!');
+                    }
+                }
+            };
+
+            ws.onerror = () => {
+                document.getElementById('status').textContent = 'Error';
+                document.getElementById('status').className = 'stat-value status-error';
+            };
+
+            ws.onclose = () => {
+                document.getElementById('status').textContent = 'Disconnected';
+                document.getElementById('status').className = 'stat-value';
+                ws = null;
+            };
+        }
+
+        setInterval(() => {
+            const now = Date.now();
+            fpsArr = fpsArr.filter(t => now - t < 1000);
+            document.getElementById('frames').textContent = frames;
+            document.getElementById('fps').textContent = fpsArr.length;
+            document.getElementById('data').textContent = (totalBytes / 1024 / 1024).toFixed(2) + ' MB';
+        }, 100);
+
+        console.log('✅ Broadway player ready');
+    </script>
+</body>
+
+</html>

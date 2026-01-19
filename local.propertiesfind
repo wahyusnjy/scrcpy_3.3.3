@@ -1,0 +1,1 @@
+sdk.dir=/Users/macbook/Library/Android/sdk server/src/main/java/com/genymobile/scrcpy/websocket -type f -name *.java -exec wc -l {} +

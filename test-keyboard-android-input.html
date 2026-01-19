@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Keyboard Test - Android Input</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            font-family: system-ui, -apple-system, sans-serif;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .panel {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        input,
+        button {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        input {
+            flex: 1;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+        }
+
+        button {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        button:hover {
+            opacity: 0.9;
+        }
+
+        button.connected {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        }
+
+        button.test {
+            background: linear-gradient(135deg, #ffeaa7 0%, #fdcb6e 100%);
+            color: #2d3436;
+        }
+
+        .keypad {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .keypad button {
+            padding: 15px;
+        }
+
+        #log {
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 10px;
+            padding: 15px;
+            height: 200px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+
+        .log-entry {
+            margin: 3px 0;
+        }
+
+        .log-sent {
+            color: #55efc4;
+        }
+
+        .log-received {
+            color: #74b9ff;
+        }
+
+        .log-error {
+            color: #ff7675;
+        }
+
+        .log-success {
+            color: #00b894;
+        }
+
+        h3 {
+            margin: 15px 0 10px 0;
+            font-size: 18px;
+        }
+
+        .status {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .status.connected {
+            background: #00b894;
+        }
+
+        .status.disconnected {
+            background: #d63031;
+        }
+
+        .info {
+            background: rgba(52, 152, 219, 0.2);
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            font-size: 13px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>⌨️ Keyboard Test - Android Input</h1>
+
+        <div class="panel">
+            <h3>Connection <span class="status disconnected" id="status">Disconnected</span></h3>
+            <div class="controls">
+                <input type="text" id="wsUrl" value="ws://localhost:8886" placeholder="WebSocket URL">
+                <button id="connectBtn" onclick="toggleConnection()">Connect</button>
+            </div>
+            <div class="info">
+                ✅ <strong>Android Input Method</strong> - Works without root!<br>
+                Uses standard Android keyboard injection (KeyEvent.KEYCODE_*)
+            </div>
+        </div>
+
+        <div class="panel">
+            <h3>⌨️ Keyboard Test (Type 102 - Android Input)</h3>
+            <p style="opacity: 0.7; font-size: 13px; margin-bottom: 10px;">
+                Click buttons to send keyboard events via Android Input API
+            </p>
+            <div class="keypad">
+                <button class="test" onclick="sendKey(61, 'Tab')">Tab</button>
+                <button class="test" onclick="sendKey(66, 'Enter')">Enter</button>
+                <button class="test" onclick="sendKey(111, 'Esc')">Esc</button>
+                <button class="test" onclick="sendKey(62, 'Space')">Space</button>
+                <button class="test" onclick="sendKey(29, 'A')">A</button>
+                <button class="test" onclick="sendKey(30, 'B')">B</button>
+                <button class="test" onclick="sendKey(31, 'C')">C</button>
+                <button class="test" onclick="sendKey(32, 'D')">D</button>
+                <button class="test" onclick="sendKey(22, '→')">→ Right</button>
+                <button class="test" onclick="sendKey(21, '←')">← Left</button>
+                <button class="test" onclick="sendKey(20, '↓')">↓ Down</button>
+                <button class="test" onclick="sendKey(19, '↑')">↑ Up</button>
+                <button class="test" onclick="sendKeyCombo(31, 'Ctrl+C')">Ctrl+C</button>
+                <button class="test" onclick="sendKeyCombo(50, 'Ctrl+V')">Ctrl+V</button>
+                <button class="test" onclick="sendKeyCombo(29, 'Ctrl+A')">Ctrl+A</button>
+                <button class="test" onclick="sendKey(67, 'Backspace')">⌫ Back</button>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h3>📋 Log</h3>
+            <div id="log"></div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+
+        // Android KeyEvent constants
+        const ACTION_DOWN = 0;
+        const ACTION_UP = 1;
+        const META_CTRL_ON = 4096;  // 0x1000
+
+        function log(message, type = 'info') {
+            const logEl = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry log-' + type;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logEl.appendChild(entry);
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        function toggleConnection() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                disconnect();
+            } else {
+                connect();
+            }
+        }
+
+        function connect() {
+            const url = document.getElementById('wsUrl').value;
+            log('Connecting to ' + url + '...');
+
+            ws = new WebSocket(url);
+            ws.binaryType = 'arraybuffer';
+
+            ws.onopen = () => {
+                log('✅ WebSocket connected', 'received');
+                document.getElementById('status').textContent = 'Connected';
+                document.getElementById('status').className = 'status connected';
+                document.getElementById('connectBtn').textContent = 'Disconnect';
+                document.getElementById('connectBtn').className = 'connected';
+            };
+
+            ws.onmessage = (e) => {
+                if (typeof e.data === 'string') {
+                    log('📨 JSON: ' + e.data, 'received');
+                } else {
+                    log('📦 Video: ' + e.data.byteLength + ' bytes', 'received');
+                }
+            };
+
+            ws.onerror = (e) => {
+                log('❌ WebSocket error', 'error');
+            };
+
+            ws.onclose = () => {
+                log('🔌 WebSocket closed');
+                document.getElementById('status').textContent = 'Disconnected';
+                document.getElementById('status').className = 'status disconnected';
+                document.getElementById('connectBtn').textContent = 'Connect';
+                document.getElementById('connectBtn').className = '';
+            };
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+
+        // Send Android Input keycode
+        // Format: [type:1][action:1][keycode:4][metaState:4] = 10 bytes
+        function sendKey(keycode, label) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('❌ Not connected!', 'error');
+                return;
+            }
+
+            // Key DOWN
+            const down = new Uint8Array(10);
+            down[0] = 102; // TYPE_INJECT_KEYCODE
+            down[1] = ACTION_DOWN;
+            // keycode (4 bytes, big-endian)
+            down[2] = (keycode >> 24) & 0xFF;
+            down[3] = (keycode >> 16) & 0xFF;
+            down[4] = (keycode >> 8) & 0xFF;
+            down[5] = keycode & 0xFF;
+            // metaState (4 bytes, big-endian)
+            down[6] = 0;
+            down[7] = 0;
+            down[8] = 0;
+            down[9] = 0;
+
+            ws.send(down);
+            log(`⌨️  DOWN: ${label} (keycode=${keycode})`, 'sent');
+
+            // Key UP after 50ms
+            setTimeout(() => {
+                const up = new Uint8Array(10);
+                up[0] = 102;
+                up[1] = ACTION_UP;
+                up[2] = (keycode >> 24) & 0xFF;
+                up[3] = (keycode >> 16) & 0xFF;
+                up[4] = (keycode >> 8) & 0xFF;
+                up[5] = keycode & 0xFF;
+                up[6] = 0;
+                up[7] = 0;
+                up[8] = 0;
+                up[9] = 0;
+
+                ws.send(up);
+                log(`⌨️  UP: ${label}`, 'sent');
+            }, 50);
+        }
+
+        // Send key with Ctrl modifier
+        function sendKeyCombo(keycode, label) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('❌ Not connected!', 'error');
+                return;
+            }
+
+            const metaState = META_CTRL_ON;
+
+            // Key DOWN with Ctrl
+            const down = new Uint8Array(10);
+            down[0] = 102;
+            down[1] = ACTION_DOWN;
+            down[2] = (keycode >> 24) & 0xFF;
+            down[3] = (keycode >> 16) & 0xFF;
+            down[4] = (keycode >> 8) & 0xFF;
+            down[5] = keycode & 0xFF;
+            down[6] = (metaState >> 24) & 0xFF;
+            down[7] = (metaState >> 16) & 0xFF;
+            down[8] = (metaState >> 8) & 0xFF;
+            down[9] = metaState & 0xFF;
+
+            ws.send(down);
+            log(`⌨️  Combo DOWN: ${label}`, 'sent');
+
+            // Key UP
+            setTimeout(() => {
+                const up = new Uint8Array(10);
+                up[0] = 102;
+                up[1] = ACTION_UP;
+                up[2] = (keycode >> 24) & 0xFF;
+                up[3] = (keycode >> 16) & 0xFF;
+                up[4] = (keycode >> 8) & 0xFF;
+                up[5] = keycode & 0xFF;
+                up[6] = (metaState >> 24) & 0xFF;
+                up[7] = (metaState >> 16) & 0xFF;
+                up[8] = (metaState >> 8) & 0xFF;
+                up[9] = metaState & 0xFF;
+
+                ws.send(up);
+                log(`⌨️  Combo UP: ${label}`, 'success');
+            }, 50);
+        }
+
+        log('🚀 Android Input Keyboard Test ready!');
+        log('This uses standard Android KeyEvent injection');
+        log('Works on ALL devices - no root required!');
+    </script>
+</body>
+
+</html>

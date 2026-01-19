@@ -40,7 +40,8 @@ public final class Device {
     public static final int INJECT_MODE_WAIT_FOR_RESULT = InputManager.INJECT_INPUT_EVENT_MODE_WAIT_FOR_RESULT;
     public static final int INJECT_MODE_WAIT_FOR_FINISH = InputManager.INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH;
 
-    // The new display power method introduced in Android 15 does not work as expected:
+    // The new display power method introduced in Android 15 does not work as
+    // expected:
     // <https://github.com/Genymobile/scrcpy/issues/5530>
     private static final boolean USE_ANDROID_15_DISPLAY_POWER = false;
 
@@ -69,11 +70,49 @@ public final class Device {
         return ServiceManager.getInputManager().injectInputEvent(inputEvent, injectMode);
     }
 
-    public static boolean injectKeyEvent(int action, int keyCode, int repeat, int metaState, int displayId, int injectMode) {
+    public static boolean injectKeyEvent(int action, int keyCode, int repeat, int metaState, int displayId,
+            int injectMode) {
         long now = SystemClock.uptimeMillis();
-        KeyEvent event = new KeyEvent(now, now, action, keyCode, repeat, metaState, KeyCharacterMap.VIRTUAL_KEYBOARD, 0, 0,
+        KeyEvent event = new KeyEvent(now, now, action, keyCode, repeat, metaState, KeyCharacterMap.VIRTUAL_KEYBOARD, 0,
+                0,
                 InputDevice.SOURCE_KEYBOARD);
         return injectEvent(event, displayId, injectMode);
+    }
+
+    public static boolean injectMotionEvent(int action, long pointerId, int x, int y, float pressure,
+            int actionButton, int buttons, int displayId) {
+        long now = SystemClock.uptimeMillis();
+
+        // Create MotionEvent.PointerProperties
+        android.view.MotionEvent.PointerProperties props = new android.view.MotionEvent.PointerProperties();
+        props.id = (int) pointerId;
+        props.toolType = android.view.MotionEvent.TOOL_TYPE_FINGER;
+
+        // Create MotionEvent.PointerCoords
+        android.view.MotionEvent.PointerCoords coords = new android.view.MotionEvent.PointerCoords();
+        coords.x = x;
+        coords.y = y;
+        coords.pressure = pressure;
+        coords.size = 1;
+
+        android.view.MotionEvent event = android.view.MotionEvent.obtain(
+                now, // downTime
+                now, // eventTime
+                action, // action
+                1, // pointerCount
+                new android.view.MotionEvent.PointerProperties[] { props },
+                new android.view.MotionEvent.PointerCoords[] { coords },
+                0, // metaState
+                actionButton, // buttonState
+                1.0f, // xPrecision
+                1.0f, // yPrecision
+                0, // deviceId
+                0, // edgeFlags
+                InputDevice.SOURCE_TOUCHSCREEN, // source
+                0 // flags
+        );
+
+        return injectEvent(event, displayId, INJECT_MODE_ASYNC);
     }
 
     public static boolean pressReleaseKeycode(int keyCode, int displayId, int injectMode) {
@@ -119,9 +158,12 @@ public final class Device {
         String currentClipboard = getClipboardText();
         if (currentClipboard != null && currentClipboard.equals(text)) {
             // The clipboard already contains the requested text.
-            // Since pasting text from the computer involves setting the device clipboard, it could be set twice on a copy-paste. This would cause
-            // the clipboard listeners to be notified twice, and that would flood the Android keyboard clipboard history. To workaround this
-            // problem, do not explicitly set the clipboard text if it already contains the expected content.
+            // Since pasting text from the computer involves setting the device clipboard,
+            // it could be set twice on a copy-paste. This would cause
+            // the clipboard listeners to be notified twice, and that would flood the
+            // Android keyboard clipboard history. To workaround this
+            // problem, do not explicitly set the clipboard text if it already contains the
+            // expected content.
             return false;
         }
 
@@ -142,19 +184,20 @@ public final class Device {
                 && Build.BRAND.equalsIgnoreCase("honor")
                 && SurfaceControl.hasGetBuildInDisplayMethod()) {
             // Workaround for Honor devices with Android 14:
-            //  - <https://github.com/Genymobile/scrcpy/issues/4823>
-            //  - <https://github.com/Genymobile/scrcpy/issues/4943>
+            // - <https://github.com/Genymobile/scrcpy/issues/4823>
+            // - <https://github.com/Genymobile/scrcpy/issues/4943>
             applyToMultiPhysicalDisplays = false;
         }
 
         int mode = on ? POWER_MODE_NORMAL : POWER_MODE_OFF;
         if (applyToMultiPhysicalDisplays) {
             // On Android 14, these internal methods have been moved to DisplayControl
-            boolean useDisplayControl =
-                    Build.VERSION.SDK_INT >= AndroidVersions.API_34_ANDROID_14 && !SurfaceControl.hasGetPhysicalDisplayIdsMethod();
+            boolean useDisplayControl = Build.VERSION.SDK_INT >= AndroidVersions.API_34_ANDROID_14
+                    && !SurfaceControl.hasGetPhysicalDisplayIdsMethod();
 
             // Change the power mode for all physical displays
-            long[] physicalDisplayIds = useDisplayControl ? DisplayControl.getPhysicalDisplayIds() : SurfaceControl.getPhysicalDisplayIds();
+            long[] physicalDisplayIds = useDisplayControl ? DisplayControl.getPhysicalDisplayIds()
+                    : SurfaceControl.getPhysicalDisplayIds();
             if (physicalDisplayIds == null) {
                 Ln.e("Could not get physical display ids");
                 return false;
@@ -188,7 +231,8 @@ public final class Device {
     }
 
     /**
-     * Disable auto-rotation (if enabled), set the screen rotation and re-enable auto-rotation (if it was enabled).
+     * Disable auto-rotation (if enabled), set the screen rotation and re-enable
+     * auto-rotation (if it was enabled).
      */
     public static void rotateDevice(int displayId) {
         assert displayId != DISPLAY_ID_NONE;
@@ -261,7 +305,8 @@ public final class Device {
     @SuppressLint("QueryPermissionsNeeded")
     public static DeviceApp findByPackageName(String packageName) {
         PackageManager pm = FakeContext.get().getPackageManager();
-        // No need to filter by "launchable" apps, an error will be reported on start if the app is not launchable
+        // No need to filter by "launchable" apps, an error will be reported on start if
+        // the app is not launchable
         for (ApplicationInfo appInfo : pm.getInstalledApplications(PackageManager.GET_META_DATA)) {
             if (packageName.equals(appInfo.packageName)) {
                 return toApp(pm, appInfo);

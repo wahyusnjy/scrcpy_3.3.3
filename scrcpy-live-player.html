@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>scrcpy Player - Annex-B Fix</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            font-family: system-ui, -apple-system, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1400px;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .controls {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            padding: 15px;
+            border-radius: 12px;
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        input,
+        button {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        input {
+            flex: 1;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+        }
+
+        button {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            cursor: pointer;
+        }
+
+        button.connected {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        }
+
+        .video-container {
+            background: #000;
+            border-radius: 15px;
+            overflow: hidden;
+            margin-bottom: 20px;
+            position: relative;
+            min-height: 400px;
+        }
+
+        canvas {
+            width: 100%;
+            display: block;
+        }
+
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .stats {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px;
+            border-radius: 12px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+            gap: 15px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 20px;
+            font-weight: bold;
+        }
+
+        .stat-label {
+            font-size: 11px;
+            opacity: 0.7;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>🎬 scrcpy WebCodecs Player</h1>
+
+        <div class="controls">
+            <input type="text" id="wsUrl" value="ws://localhost:8886">
+            <button id="connectBtn" onclick="toggle()">Connect</button>
+        </div>
+
+        <div class="video-container">
+            <canvas id="canvas"></canvas>
+            <div class="overlay" id="overlay">Click Connect to start</div>
+        </div>
+
+        <div class="stats">
+            <div>
+                <div class="stat-value" id="status">-</div>
+                <div class="stat-label">Status</div>
+            </div>
+            <div>
+                <div class="stat-value" id="fps">0</div>
+                <div class="stat-label">FPS</div>
+            </div>
+            <div>
+                <div class="stat-value" id="frames">0</div>
+                <div class="stat-label">Frames</div>
+            </div>
+            <div>
+                <div class="stat-value" id="data">0 MB</div>
+                <div class="stat-label">Data</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws, decoder;
+        let frameCount = 0, totalBytes = 0, frameTimestamps = [];
+
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        // Convert Annex-B to AVCC (remove start codes, add length prefixes)
+        function annexBtoAVCC(data) {
+            if (data.byteLength < 5) return new Uint8Array(0);
+            const view = new DataView(data);
+            const result = [];
+            let i = 0;
+
+            while (i < data.byteLength) {
+                // Find start code
+                let startCodeLen = 0;
+                if (i + 3 < data.byteLength && view.getUint32(i) === 0x00000001) {
+                    startCodeLen = 4;
+                } else if (i + 2 < data.byteLength &&
+                    (view.getUint32(i) & 0xFFFFFF00) === 0x00000100) {
+                    startCodeLen = 3;
+                } else {
+                    i++;
+                    continue;
+                }
+
+                const nalStart = i + startCodeLen;
+                if (nalStart >= data.byteLength) break;
+
+                // Find next start code
+                let nextStart = data.byteLength;
+                for (let j = nalStart + 1; j <= data.byteLength - 4; j++) {
+                    if (view.getUint32(j) === 0x00000001) {
+                        nextStart = j;
+                        break;
+                    } else if (j <= data.byteLength - 3 && (view.getUint32(j) & 0xFFFFFF00) === 0x00000100) {
+                        nextStart = j;
+                        break;
+                    }
+                }
+
+                const nalLen = nextStart - nalStart;
+                if (nalLen <= 0) {
+                    i = nextStart;
+                    continue;
+                }
+
+                const nalData = new Uint8Array(data.slice(nalStart, nextStart));
+
+                // Create AVCC NAL unit (4-byte length + data)
+                const avccNal = new Uint8Array(4 + nalLen);
+                avccNal[0] = (nalLen >> 24) & 0xFF;
+                avccNal[1] = (nalLen >> 16) & 0xFF;
+                avccNal[2] = (nalLen >> 8) & 0xFF;
+                avccNal[3] = nalLen & 0xFF;
+                avccNal.set(nalData, 4);
+
+                result.push(avccNal);
+                i = nextStart;
+            }
+
+            // Combine all NAL units
+            if (result.length === 0) return new Uint8Array(0);
+            const totalLen = result.reduce((sum, nal) => sum + nal.length, 0);
+            const output = new Uint8Array(totalLen);
+            let offset = 0;
+            for (const nal of result) {
+                output.set(nal, offset);
+                offset += nal.length;
+            }
+
+            return output;
+        }
+
+        function extractNAL(data, type) {
+            if (data.byteLength < 5) return null; // Need at least start code + NAL type
+            const view = new DataView(data);
+            let i = 0;
+
+            while (i <= data.byteLength - 4) {
+                let scLen = 0;
+                if (view.getUint32(i) === 0x00000001) scLen = 4;
+                else if (i <= data.byteLength - 3 && (view.getUint32(i) & 0xFFFFFF00) === 0x00000100) scLen = 3;
+                else { i++; continue; }
+
+                if (i + scLen >= data.byteLength) break; // No room for NAL type
+
+                const nalType = view.getUint8(i + scLen) & 0x1F;
+                if (nalType === type) {
+                    // Find next start
+                    let next = data.byteLength;
+                    for (let j = i + scLen + 1; j <= data.byteLength - 4; j++) {
+                        if (view.getUint32(j) === 0x00000001 ||
+                            (j <= data.byteLength - 3 && (view.getUint32(j) & 0xFFFFFF00) === 0x00000100)) {
+                            next = j;
+                            break;
+                        }
+                    }
+                    return new Uint8Array(data.slice(i + scLen, next));
+                }
+                i++;
+            }
+            return null;
+        }
+
+        function hasNAL(data, type) {
+            if (data.byteLength < 5) return false;
+            const view = new DataView(data);
+            for (let i = 0; i <= data.byteLength - 4; i++) {
+                let scLen = 0;
+                if (view.getUint32(i) === 0x00000001) scLen = 4;
+                else if (i <= data.byteLength - 3 && (view.getUint32(i) & 0xFFFFFF00) === 0x00000100) scLen = 3;
+                else continue;
+
+                if (i + scLen >= data.byteLength) break;
+
+                const nalType = view.getUint8(i + scLen) & 0x1F;
+                if (nalType === type) return true;
+            }
+            return false;
+        }
+
+        let sps = null, pps = null, configured = false, keyframeReceived = false;
+
+        function tryConfig() {
+            if (configured || !sps || !pps) return;
+
+            // Build avcC description
+            const avcC = new Uint8Array(11 + sps.length + 3 + pps.length);
+            let o = 0;
+            avcC[o++] = 1; // version
+            avcC[o++] = sps[1]; // profile
+            avcC[o++] = sps[2]; // compatibility
+            avcC[o++] = sps[3]; // level
+            avcC[o++] = 0xFF; // reserved + lengthSizeMinusOne
+            avcC[o++] = 0xE1; // reserved + numSPS
+            avcC[o++] = (sps.length >> 8) & 0xFF;
+            avcC[o++] = sps.length & 0xFF;
+            avcC.set(sps, o); o += sps.length;
+            avcC[o++] = 1; // numPPS
+            avcC[o++] = (pps.length >> 8) & 0xFF;
+            avcC[o++] = pps.length & 0xFF;
+            avcC.set(pps, o);
+
+            decoder.configure({
+                codec: 'avc1.42E01E',
+                description: avcC,
+                optimizeForLatency: true,
+                hardwareAcceleration: 'prefer-hardware'
+            });
+
+            configured = true;
+            keyframeReceived = false; // Reset, wait for first keyframe
+            console.log('✅ Decoder configured with SPS/PPS, waiting for keyframe...');
+        }
+
+        function connect() {
+            decoder = new VideoDecoder({
+                output: (frame) => {
+                    canvas.width = frame.displayWidth;
+                    canvas.height = frame.displayHeight;
+                    ctx.drawImage(frame, 0, 0);
+                    frame.close();
+                    frameTimestamps.push(Date.now());
+                    document.getElementById('overlay').classList.add('hidden');
+                },
+                error: (e) => {
+                    console.error('Decoder error:', e);
+                    document.getElementById('overlay').textContent = 'Decoder Error: ' + e.message;
+                    document.getElementById('overlay').classList.remove('hidden');
+                }
+            });
+
+            document.getElementById('overlay').textContent = 'Connecting...';
+            document.getElementById('overlay').classList.remove('hidden');
+
+            ws = new WebSocket(document.getElementById('wsUrl').value);
+            ws.binaryType = 'arraybuffer';
+
+            ws.onopen = () => {
+                console.log('✅ Connected');
+                document.getElementById('status').textContent = 'Connected';
+                document.getElementById('connectBtn').className = 'connected';
+            };
+
+            ws.onmessage = (e) => {
+                if (typeof e.data === 'string') return;
+
+                frameCount++;
+                totalBytes += e.data.byteLength;
+
+                // Extract SPS/PPS
+                const s = extractNAL(e.data, 7);
+                const p = extractNAL(e.data, 8);
+                if (s) sps = s;
+                if (p) pps = p;
+
+                tryConfig();
+
+                if (!configured) return; // Wait for config
+
+                // Check if this frame has a keyframe
+                const isKeyframe = hasNAL(e.data, 5);
+
+                // Skip frames until we get first keyframe after config
+                if (!keyframeReceived && !isKeyframe) {
+                    console.log('Waiting for keyframe, skipping frame...');
+                    return;
+                }
+
+                if (isKeyframe && !keyframeReceived) {
+                    keyframeReceived = true;
+                    console.log('✅ First keyframe received, starting decode');
+                }
+
+                try {
+                    // Convert to AVCC
+                    let avccData = annexBtoAVCC(e.data);
+                    if (avccData.length === 0) return;
+
+                    // For first keyframe, prepend SPS/PPS in AVCC format
+                    if (isKeyframe && frameCount === 1) {
+                        console.log('Prepending SPS/PPS to first keyframe');
+                        const spsAvcc = new Uint8Array(4 + sps.length);
+                        spsAvcc[0] = (sps.length >> 24) & 0xFF;
+                        spsAvcc[1] = (sps.length >> 16) & 0xFF;
+                        spsAvcc[2] = (sps.length >> 8) & 0xFF;
+                        spsAvcc[3] = sps.length & 0xFF;
+                        spsAvcc.set(sps, 4);
+
+                        const ppsAvcc = new Uint8Array(4 + pps.length);
+                        ppsAvcc[0] = (pps.length >> 24) & 0xFF;
+                        ppsAvcc[1] = (pps.length >> 16) & 0xFF;
+                        ppsAvcc[2] = (pps.length >> 8) & 0xFF;
+                        ppsAvcc[3] = pps.length & 0xFF;
+                        ppsAvcc.set(pps, 4);
+
+                        const combined = new Uint8Array(spsAvcc.length + ppsAvcc.length + avccData.length);
+                        combined.set(spsAvcc, 0);
+                        combined.set(ppsAvcc, spsAvcc.length);
+                        combined.set(avccData, spsAvcc.length + ppsAvcc.length);
+                        avccData = combined;
+                    }
+
+                    const chunk = new EncodedVideoChunk({
+                        type: isKeyframe ? 'key' : 'delta',
+                        timestamp: performance.now() * 1000,
+                        data: avccData
+                    });
+
+                    decoder.decode(chunk);
+                } catch (err) {
+                    console.error('Decode error:', err);
+                }
+
+                // Update stats
+                document.getElementById('frames').textContent = frameCount;
+                document.getElementById('data').textContent = (totalBytes / 1024 / 1024).toFixed(2) + ' MB';
+            };
+
+            ws.onerror = () => document.getElementById('status').textContent = 'Error';
+            ws.onclose = () => {
+                document.getElementById('status').textContent = 'Disconnected';
+                document.getElementById('connectBtn').className = '';
+            };
+        }
+
+        function disconnect() {
+            if (ws) ws.close();
+            if (decoder && decoder.state !== 'closed') {
+                try { decoder.close(); } catch (e) { }
+            }
+            ws = decoder = null;
+            configured = false;
+            keyframeReceived = false;
+            sps = pps = null;
+        }
+
+        function toggle() {
+            if (ws && ws.readyState === WebSocket.OPEN) disconnect();
+            else connect();
+        }
+
+        setInterval(() => {
+            const fps = frameTimestamps.filter(t => Date.now() - t < 1000).length;
+            document.getElementById('fps').textContent = fps;
+        }, 100);
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UHID Test Client</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            font-family: system-ui, -apple-system, sans-serif;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .panel {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        input,
+        button {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        input {
+            flex: 1;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+        }
+
+        button {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        button:hover {
+            opacity: 0.9;
+        }
+
+        button.connected {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        }
+
+        button.test {
+            background: linear-gradient(135deg, #ffeaa7 0%, #fdcb6e 100%);
+            color: #2d3436;
+        }
+
+        .keypad {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .keypad button {
+            padding: 15px;
+        }
+
+        .mouse-test {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            margin-top: 15px;
+        }
+
+        .mouse-buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin: 15px 0;
+        }
+
+        .mouse-buttons button {
+            min-width: 100px;
+        }
+
+        #log {
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 10px;
+            padding: 15px;
+            height: 150px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+
+        .log-entry {
+            margin: 3px 0;
+        }
+
+        .log-sent {
+            color: #55efc4;
+        }
+
+        .log-received {
+            color: #74b9ff;
+        }
+
+        .log-error {
+            color: #ff7675;
+        }
+
+        h3 {
+            margin: 15px 0 10px 0;
+            font-size: 18px;
+        }
+
+        .status {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .status.connected {
+            background: #00b894;
+        }
+
+        .status.disconnected {
+            background: #d63031;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>🎮 UHID Test Client</h1>
+
+        <div class="panel">
+            <h3>Connection <span class="status disconnected" id="status">Disconnected</span></h3>
+            <div class="controls">
+                <input type="text" id="wsUrl" value="ws://localhost:8886" placeholder="WebSocket URL">
+                <button id="connectBtn" onclick="toggleConnection()">Connect</button>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h3>⌨️ Keyboard Test (UHID Type 100)</h3>
+            <p style="opacity: 0.7; font-size: 13px; margin-bottom: 10px;">
+                Click buttons to send keyboard events via UHID
+            </p>
+            <div class="keypad">
+                <button class="test" onclick="sendKey(0x2B, 'Tab')">Tab</button>
+                <button class="test" onclick="sendKey(0x28, 'Enter')">Enter</button>
+                <button class="test" onclick="sendKey(0x29, 'Esc')">Esc</button>
+                <button class="test" onclick="sendKey(0x2C, 'Space')">Space</button>
+                <button class="test" onclick="sendKey(0x04, 'A')">A</button>
+                <button class="test" onclick="sendKey(0x05, 'B')">B</button>
+                <button class="test" onclick="sendKey(0x06, 'C')">C</button>
+                <button class="test" onclick="sendKey(0x07, 'D')">D</button>
+                <button class="test" onclick="sendKey(0x4F, '→')">→ Right</button>
+                <button class="test" onclick="sendKey(0x50, '←')">← Left</button>
+                <button class="test" onclick="sendKey(0x51, '↓')">↓ Down</button>
+                <button class="test" onclick="sendKey(0x52, '↑')">↑ Up</button>
+                <button class="test" onclick="sendKeyWithMod(0x01, 0x06, 'Ctrl+C')">Ctrl+C</button>
+                <button class="test" onclick="sendKeyWithMod(0x01, 0x16, 'Ctrl+V')">Ctrl+V</button>
+                <button class="test" onclick="sendKeyWithMod(0x01, 0x04, 'Ctrl+A')">Ctrl+A</button>
+                <button class="test" onclick="sendKeyWithMod(0x02, 0x2B, 'Shift+Tab')">Shift+Tab</button>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h3>🖱️ Mouse Test (UHID Type 101)</h3>
+            <p style="opacity: 0.7; font-size: 13px; margin-bottom: 10px;">
+                Test mouse button clicks and movement
+            </p>
+            <div class="mouse-buttons">
+                <button class="test" onclick="sendMouseClick(0x01, 'Left')">Left Click</button>
+                <button class="test" onclick="sendMouseClick(0x02, 'Right')">Right Click</button>
+                <button class="test" onclick="sendMouseClick(0x04, 'Middle')">Middle Click</button>
+            </div>
+            <div class="mouse-test">
+                <div style="margin-bottom: 10px;">Mouse Movement Test</div>
+                <div style="display: grid; grid-template-columns: repeat(3, 80px); gap: 5px; justify-content: center;">
+                    <div></div>
+                    <button class="test" onclick="sendMouseMove(0, -20, '↑')">↑</button>
+                    <div></div>
+                    <button class="test" onclick="sendMouseMove(-20, 0, '←')">←</button>
+                    <button class="test" onclick="sendMouseMove(0, 0, '•')">•</button>
+                    <button class="test" onclick="sendMouseMove(20, 0, '→')">→</button>
+                    <div></div>
+                    <button class="test" onclick="sendMouseMove(0, 20, '↓')">↓</button>
+                    <div></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h3>📋 Log</h3>
+            <div id="log"></div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+
+        function log(message, type = 'info') {
+            const logEl = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry log-' + type;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logEl.appendChild(entry);
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        function toggleConnection() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                disconnect();
+            } else {
+                connect();
+            }
+        }
+
+        function connect() {
+            const url = document.getElementById('wsUrl').value;
+            log('Connecting to ' + url + '...');
+
+            ws = new WebSocket(url);
+            ws.binaryType = 'arraybuffer';
+
+            ws.onopen = () => {
+                log('✅ WebSocket connected', 'received');
+                document.getElementById('status').textContent = 'Connected';
+                document.getElementById('status').className = 'status connected';
+                document.getElementById('connectBtn').textContent = 'Disconnect';
+                document.getElementById('connectBtn').className = 'connected';
+            };
+
+            ws.onmessage = (e) => {
+                if (typeof e.data === 'string') {
+                    log('📨 JSON: ' + e.data, 'received');
+                } else {
+                    log('📦 Binary: ' + e.data.byteLength + ' bytes', 'received');
+                }
+            };
+
+            ws.onerror = (e) => {
+                log('❌ WebSocket error', 'error');
+            };
+
+            ws.onclose = () => {
+                log('🔌 WebSocket closed');
+                document.getElementById('status').textContent = 'Disconnected';
+                document.getElementById('status').className = 'status disconnected';
+                document.getElementById('connectBtn').textContent = 'Connect';
+                document.getElementById('connectBtn').className = '';
+            };
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+
+        // Send keyboard event
+        function sendKey(keyCode, label) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('❌ Not connected!', 'error');
+                return;
+            }
+
+            // Press
+            const press = new Uint8Array(9);
+            press[0] = 100; // TYPE_UHID_KEYBOARD
+            press[1] = 0;   // no modifiers
+            press[2] = 0;   // reserved
+            press[3] = keyCode;
+            // press[4-8] = 0
+
+            ws.send(press);
+            log(`⌨️  Sent: ${label} (0x${keyCode.toString(16).padStart(2, '0')})`, 'sent');
+
+            // Release after 100ms
+            setTimeout(() => {
+                const release = new Uint8Array(9);
+                release[0] = 100;
+                ws.send(release);
+                log(`⌨️  Released: ${label}`, 'sent');
+            }, 100);
+        }
+
+        // Send keyboard with modifier
+        function sendKeyWithMod(modifiers, keyCode, label) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('❌ Not connected!', 'error');
+                return;
+            }
+
+            const press = new Uint8Array(9);
+            press[0] = 100;
+            press[1] = modifiers;
+            press[2] = 0;
+            press[3] = keyCode;
+
+            ws.send(press);
+            log(`⌨️  Sent: ${label}`, 'sent');
+
+            setTimeout(() => {
+                ws.send(new Uint8Array(9).fill(0).map((_, i) => i === 0 ? 100 : 0));
+                log(`⌨️  Released: ${label}`, 'sent');
+            }, 100);
+        }
+
+        // Send mouse click
+        function sendMouseClick(buttons, label) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('❌ Not connected!', 'error');
+                return;
+            }
+
+            // Press
+            const press = new Uint8Array(5);
+            press[0] = 101; // TYPE_UHID_MOUSE
+            press[1] = buttons;
+            press[2] = 0; // dx
+            press[3] = 0; // dy
+            press[4] = 0; // wheel
+
+            ws.send(press);
+            log(`🖱️  Click: ${label}`, 'sent');
+
+            // Release
+            setTimeout(() => {
+                const release = new Uint8Array(5);
+                release[0] = 101;
+                ws.send(release);
+                log(`🖱️  Released: ${label}`, 'sent');
+            }, 100);
+        }
+
+        // Send mouse movement
+        function sendMouseMove(dx, dy, label) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('❌ Not connected!', 'error');
+                return;
+            }
+
+            const move = new Uint8Array(5);
+            move[0] = 101; // TYPE_UHID_MOUSE
+            move[1] = 0;   // no buttons
+            move[2] = dx & 0xFF;
+            move[3] = dy & 0xFF;
+            move[4] = 0;   // no wheel
+
+            ws.send(move);
+            log(`🖱️  Move: ${label} (dx=${dx}, dy=${dy})`, 'sent');
+        }
+
+        log('🚀 UHID Test Client ready!');
+        log('Click Connect to start testing');
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>scrcpy WebSocket Player - Broadway.js</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: white;
+            overflow: hidden;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        .header {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .logo {
+            font-size: 24px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        input,
+        select,
+        button {
+            padding: 8px 15px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        input,
+        select {
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        button.connected {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+
+        .video-container {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            position: relative;
+        }
+
+        #screen {
+            max-width: 100%;
+            max-height: 100%;
+            border-radius: 10px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            background: #000;
+        }
+
+        .overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            pointer-events: none;
+        }
+
+        .overlay.hidden {
+            display: none;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .stats {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(10px);
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 12px;
+            min-width: 200px;
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 5px 0;
+        }
+
+        .stat-label {
+            opacity: 0.7;
+        }
+
+        .stat-value {
+            font-weight: bold;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 5px;
+        }
+
+        .status-dot.connected {
+            background: #4CAF50;
+            box-shadow: 0 0 10px #4CAF50;
+        }
+
+        .status-dot.disconnected {
+            background: #F44336;
+        }
+
+        .decoder-info {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 11px;
+            opacity: 0.7;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">
+                <span>🎬</span>
+                <span>scrcpy WebSocket Player</span>
+            </div>
+            <div class="controls">
+                <input type="text" id="wsUrl" placeholder="WebSocket URL" value="ws://localhost:8886">
+                <select id="decoderSelect">
+                    <option value="broadway">Broadway.js (H264 only)</option>
+                    <option value="webcodecs-h264">WebCodecs H264 (Hardware)</option>
+                    <option value="webcodecs-h265">WebCodecs H265 (Hardware)</option>
+                </select>
+                <button id="connectBtn" onclick="toggleConnection()">
+                    Connect
+                </button>
+            </div>
+        </div>
+
+        <div class="video-container">
+            <canvas id="screen"></canvas>
+            <div class="overlay" id="overlay">
+                <div class="spinner"></div>
+                <div id="overlayText">Click Connect to start streaming</div>
+            </div>
+        </div>
+
+        <div class="stats">
+            <div class="stat-row">
+                <span class="stat-label">Status:</span>
+                <span class="stat-value">
+                    <span class="status-dot" id="statusDot"></span>
+                    <span id="statusText">Disconnected</span>
+                </span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Codec:</span>
+                <span class="stat-value" id="codecInfo">-</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Resolution:</span>
+                <span class="stat-value" id="resolution">-</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">FPS:</span>
+                <span class="stat-value" id="fps">0</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Frames:</span>
+                <span class="stat-value" id="frameCount">0</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Data:</span>
+                <span class="stat-value" id="dataReceived">0 KB</span>
+            </div>
+            <div class="decoder-info" id="decoderInfo">
+                Decoder: Not initialized
+            </div>
+        </div>
+    </div>
+
+    <!-- Broadway.js for H264 Software Decoding -->
+    <script src="https://cdn.jsdelivr.net/npm/broadway-player@1.0.7/dist/Broadway.min.js"></script>
+
+    <script>
+        let ws = null;
+        let decoder = null;
+        let decoderType = 'broadway';
+        let frameCount = 0;
+        let totalBytes = 0;
+        let frameTimestamps = [];
+        let lastFrameTime = Date.now();
+        let deviceInfo = null;
+
+        const canvas = document.getElementById('screen');
+        const ctx = canvas.getContext('2d');
+
+        function updateUI() {
+            // FPS calculation
+            const now = Date.now();
+            frameTimestamps = frameTimestamps.filter(t => now - t < 1000);
+            const fps = frameTimestamps.length;
+
+            document.getElementById('fps').textContent = fps;
+            document.getElementById('frameCount').textContent = frameCount;
+            document.getElementById('dataReceived').textContent = (totalBytes / 1024 / 1024).toFixed(2) + ' MB';
+
+            if (deviceInfo) {
+                document.getElementById('resolution').textContent =
+                    `${canvas.width}x${canvas.height}`;
+            }
+        }
+
+        function setStatus(connected, text) {
+            const dot = document.getElementById('statusDot');
+            const statusText = document.getElementById('statusText');
+            const btn = document.getElementById('connectBtn');
+
+            if (connected) {
+                dot.className = 'status-dot connected';
+                statusText.textContent = text || 'Connected';
+                btn.textContent = 'Disconnect';
+                btn.className = 'connected';
+            } else {
+                dot.className = 'status-dot disconnected';
+                statusText.textContent = text || 'Disconnected';
+                btn.textContent = 'Connect';
+                btn.className = '';
+            }
+        }
+
+        function showOverlay(text) {
+            const overlay = document.getElementById('overlay');
+            const overlayText = document.getElementById('overlayText');
+            overlay.classList.remove('hidden');
+            overlayText.textContent = text;
+        }
+
+        function hideOverlay() {
+            document.getElementById('overlay').classList.add('hidden');
+        }
+
+        async function initDecoder() {
+            decoderType = document.getElementById('decoderSelect').value;
+
+            if (decoderType === 'broadway') {
+                // Broadway.js (H264 only, software)
+                decoder = new Player({
+                    useWorker: true,
+                    webgl: 'auto',
+                    size: { width: 1280, height: 720 }
+                });
+                decoder.canvas = canvas;
+                document.getElementById('decoderInfo').textContent =
+                    'Decoder: Broadway.js (H264 Software)';
+                document.getElementById('codecInfo').textContent = 'H264';
+
+            } else if (decoderType.startsWith('webcodecs')) {
+                // WebCodecs API (Hardware accelerated)
+                const codec = decoderType === 'webcodecs-h264' ? 'avc1.42E01E' : 'hev1.1.6.L93.B0';
+                const codecName = decoderType === 'webcodecs-h264' ? 'H264' : 'H265';
+
+                if (!('VideoDecoder' in window)) {
+                    alert('WebCodecs API not supported in this browser!');
+                    return false;
+                }
+
+                try {
+                    decoder = new VideoDecoder({
+                        output: (frame) => {
+                            canvas.width = frame.displayWidth;
+                            canvas.height = frame.displayHeight;
+                            ctx.drawImage(frame, 0, 0);
+                            frame.close();
+
+                            frameTimestamps.push(Date.now());
+                            updateUI();
+                        },
+                        error: (e) => {
+                            console.error('WebCodecs error:', e);
+                        }
+                    });
+
+                    decoder.configure({
+                        codec: codec,
+                        optimizeForLatency: true,
+                        hardwareAcceleration: 'prefer-hardware'
+                    });
+
+                    document.getElementById('decoderInfo').textContent =
+                        `Decoder: WebCodecs (${codecName} Hardware)`;
+                    document.getElementById('codecInfo').textContent = codecName;
+
+                } catch (e) {
+                    console.error('WebCodecs init error:', e);
+                    alert('Failed to initialize WebCodecs: ' + e.message);
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        async function toggleConnection() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                disconnect();
+            } else {
+                await connect();
+            }
+        }
+
+        async function connect() {
+            const url = document.getElementById('wsUrl').value;
+
+            if (!await initDecoder()) {
+                return;
+            }
+
+            showOverlay('Connecting...');
+            setStatus(false, 'Connecting...');
+
+            try {
+                ws = new WebSocket(url);
+                ws.binaryType = 'arraybuffer';
+
+                ws.onopen = () => {
+                    console.log('✅ WebSocket connected');
+                    setStatus(true, 'Connected');
+                    showOverlay('Waiting for video stream...');
+                };
+
+                ws.onmessage = (event) => {
+                    if (typeof event.data === 'string') {
+                        // JSON message (device info)
+                        try {
+                            deviceInfo = JSON.parse(event.data);
+                            console.log('Device info:', deviceInfo);
+
+                            if (deviceInfo.device) {
+                                setStatus(true, `${deviceInfo.device.manufacturer} ${deviceInfo.device.model}`);
+                            }
+                        } catch (e) {
+                            console.warn('Could not parse message:', event.data);
+                        }
+                    } else {
+                        // Binary data (video frame)
+                        frameCount++;
+                        totalBytes += event.data.byteLength;
+
+                        if (frameCount === 1) {
+                            hideOverlay();
+                        }
+
+                        decodeFrame(event.data);
+                    }
+                };
+
+                ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    setStatus(false, 'Error');
+                    showOverlay('Connection error');
+                };
+
+                ws.onclose = () => {
+                    console.log('WebSocket closed');
+                    setStatus(false, 'Disconnected');
+                    showOverlay('Disconnected');
+                    ws = null;
+                };
+
+            } catch (error) {
+                console.error('Connection error:', error);
+                alert('Failed to connect: ' + error.message);
+                setStatus(false, 'Error');
+                showOverlay('Connection failed');
+            }
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+            }
+            if (decoder && decoder.close) {
+                decoder.close();
+            }
+            decoder = null;
+        }
+
+        function decodeFrame(data) {
+            if (!decoder) return;
+
+            try {
+                if (decoderType === 'broadway') {
+                    // Broadway.js expects Uint8Array
+                    const uint8Array = new Uint8Array(data);
+                    decoder.decode(uint8Array);
+
+                } else if (decoderType.startsWith('webcodecs')) {
+                    // WebCodecs expects EncodedVideoChunk
+                    const chunk = new EncodedVideoChunk({
+                        type: 'key', // Simplification: treat all as key frames
+                        timestamp: performance.now() * 1000,
+                        data: data
+                    });
+                    decoder.decode(chunk);
+                }
+
+                frameTimestamps.push(Date.now());
+                updateUI();
+
+            } catch (e) {
+                console.error('Decode error:', e);
+            }
+        }
+
+        // Stats update loop
+        setInterval(updateUI, 100);
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if (e.key === ' ' && e.ctrlKey) {
+                e.preventDefault();
+                toggleConnection();
+            }
+        });
+
+        console.log('scrcpy WebSocket Player ready!');
+        console.log('Supported codecs: H264 (Broadway.js), H264/H265 (WebCodecs)');
+    </script>
+</body>
+
+</html>

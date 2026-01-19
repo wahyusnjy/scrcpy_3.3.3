@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>scrcpy WebSocket Debug Tool</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        }
+        h1 {
+            margin-top: 0;
+            text-align: center;
+        }
+        .status {
+            padding: 15px;
+            border-radius: 10px;
+            margin: 15px 0;
+            font-weight: bold;
+        }
+        .status.disconnected {
+            background: rgba(244, 67, 54, 0.3);
+        }
+        .status.connected {
+            background: rgba(76, 175, 80, 0.3);
+        }
+        .controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin: 20px 0;
+        }
+        input, button {
+            padding: 12px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            cursor: pointer;
+            font-weight: bold;
+            transition: transform 0.2s;
+        }
+        button:hover {
+            transform: scale(1.05);
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .log {
+            background: rgba(0,0,0,0.3);
+            padding: 20px;
+            border-radius: 10px;
+            height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            margin-top: 20px;
+        }
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px;
+            border-left: 3px solid;
+            padding-left: 10px;
+        }
+        .log-info { border-color: #2196F3; }
+        .log-success { border-color: #4CAF50; }
+        .log-warning { border-color: #FF9800; }
+        .log-error { border-color: #F44336; }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .stat-card {
+            background: rgba(255,255,255,0.1);
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 28px;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        .stat-label {
+            font-size: 12px;
+            opacity: 0.8;
+        }
+        canvas {
+            width: 100%;
+            max-width: 800px;
+            background: #000;
+            border-radius: 10px;
+            margin: 20px auto;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 scrcpy WebSocket Debug Tool</h1>
+        
+        <div id="status" class="status disconnected">
+            ⚫ Disconnected
+        </div>
+
+        <div class="controls">
+            <input type="text" id="wsUrl" value="ws://localhost:8886" placeholder="WebSocket URL">
+            <button id="connectBtn" onclick="connect()">🔌 Connect</button>
+        </div>
+
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-label">Messages Received</div>
+                <div class="stat-value" id="msgCount">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Video Frames</div>
+                <div class="stat-value" id="frameCount">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Data Received</div>
+                <div class="stat-value" id="dataSize">0 KB</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Frame Rate</div>
+                <div class="stat-value" id="fps">0 FPS</div>
+            </div>
+        </div>
+
+        <canvas id="videoCanvas" width="1280" height="720"></canvas>
+
+        <div class="log" id="log"></div>
+    </div>
+
+    <script>
+        let ws = null;
+        let messageCount = 0;
+        let frameCount = 0;
+        let totalBytes = 0;
+        let lastFrameTime = Date.now();
+        let frameTimestamps = [];
+
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            const timestamp = new Date().toLocaleTimeString();
+            entry.textContent = `[${timestamp}] ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function updateStatus(connected) {
+            const statusDiv = document.getElementById('status');
+            const btn = document.getElementById('connectBtn');
+            
+            if (connected) {
+                statusDiv.className = 'status connected';
+                statusDiv.textContent = '🟢 Connected';
+                btn.textContent = '🔌 Disconnect';
+                btn.onclick = disconnect;
+            } else {
+                statusDiv.className = 'status disconnected';
+                statusDiv.textContent = '⚫ Disconnected';
+                btn.textContent = '🔌 Connect';
+                btn.onclick = connect;
+            }
+        }
+
+        function updateStats() {
+            document.getElementById('msgCount').textContent = messageCount;
+            document.getElementById('frameCount').textContent = frameCount;
+            document.getElementById('dataSize').textContent = (totalBytes / 1024).toFixed(2) + ' KB';
+            
+            // Calculate FPS
+            const now = Date.now();
+            frameTimestamps = frameTimestamps.filter(t => now - t < 1000);
+            document.getElementById('fps').textContent = frameTimestamps.length + ' FPS';
+        }
+
+        function connect() {
+            const url = document.getElementById('wsUrl').value;
+            log('Connecting to ' + url, 'info');
+            
+            try {
+                ws = new WebSocket(url);
+                
+                ws.onopen = () => {
+                    log('✅ WebSocket connected!', 'success');
+                    updateStatus(true);
+                };
+                
+                ws.onmessage = (event) => {
+                    messageCount++;
+                    
+                    if (typeof event.data === 'string') {
+                        // JSON message (device info)
+                        try {
+                            const data = JSON.parse(event.data);
+                            log('📨 JSON Message: ' + JSON.stringify(data), 'info');
+                            
+                            if (data.type === 'deviceInfo') {
+                                log('📱 Device: ' + data.device.manufacturer + ' ' + data.device.model, 'success');
+                            }
+                        } catch (e) {
+                            log('⚠️ Invalid JSON: ' + event.data, 'warning');
+                        }
+                    } else if (event.data instanceof Blob) {
+                        // Binary data (video frame)
+                        frameCount++;
+                        frameTimestamps.push(Date.now());
+                        totalBytes += event.data.size;
+                        
+                        event.data.arrayBuffer().then(buffer => {
+                            const view = new DataView(buffer);
+                            
+                            // Check for H264 NAL unit
+                            let isH264 = false;
+                            let nalType = 'unknown';
+                            
+                            if (buffer.byteLength >= 4) {
+                                const startCode = view.getUint32(0);
+                                
+                                if (startCode === 0x00000001) {
+                                    isH264 = true;
+                                    nalType = view.getUint8(4) & 0x1F;
+                                } else if ((startCode & 0xFFFFFF00) === 0x00000100) {
+                                    isH264 = true;
+                                    nalType = view.getUint8(3) & 0x1F;
+                                }
+                            }
+                            
+                            if (isH264) {
+                                const nalNames = {
+                                    1: 'P-frame',
+                                    5: 'IDR (I-frame)',
+                                    7: 'SPS',
+                                    8: 'PPS',
+                                    9: 'Access Unit'
+                                };
+                                
+                                log(`🎥 H264 Frame: ${buffer.byteLength} bytes, NAL Type: ${nalType} (${nalNames[nalType] || 'Unknown'})`, 'success');
+                            } else {
+                                log(`📦 Binary Frame: ${buffer.byteLength} bytes (not H264 NAL?)`, 'warning');
+                                
+                                // Show first 16 bytes in hex
+                                let hex = '';
+                                for (let i = 0; i < Math.min(16, buffer.byteLength); i++) {
+                                    hex += view.getUint8(i).toString(16).padStart(2, '0') + ' ';
+                                }
+                                log(`   First bytes: ${hex}`, 'info');
+                            }
+                        });
+                    }
+                    
+                    updateStats();
+                };
+                
+                ws.onerror = (error) => {
+                    log('❌ WebSocket error: ' + error, 'error');
+                };
+                
+                ws.onclose = () => {
+                    log('🔌 WebSocket disconnected', 'warning');
+                    updateStatus(false);
+                    ws = null;
+                };
+                
+            } catch (error) {
+                log('❌ Connection failed: ' + error.message, 'error');
+            }
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                log('Disconnecting...', 'info');
+            }
+        }
+
+        // Auto-connect on load
+        window.onload = () => {
+            log('🚀 Debug tool ready', 'success');
+            log('Click Connect to start debugging', 'info');
+        };
+    </script>
+</body>
+</html>

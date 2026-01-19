@@ -33,7 +33,7 @@ public class SurfaceEncoder implements AsyncProcessor {
     private static final String KEY_MAX_FPS_TO_ENCODER = "max-fps-to-encoder";
 
     // Keep the values in descending order
-    private static final int[] MAX_SIZE_FALLBACK = {2560, 1920, 1600, 1280, 1024, 800};
+    private static final int[] MAX_SIZE_FALLBACK = { 2560, 1920, 1600, 1280, 1024, 800 };
     private static final int MAX_CONSECUTIVE_ERRORS = 3;
 
     private final SurfaceCapture capture;
@@ -106,18 +106,22 @@ public class SurfaceEncoder implements AsyncProcessor {
                     } else {
                         boolean resetRequested = reset.consumeReset();
                         if (!resetRequested) {
-                            // If a reset is requested during encode(), it will interrupt the encoding by an EOS
+                            // If a reset is requested during encode(), it will interrupt the encoding by an
+                            // EOS
                             encode(mediaCodec, streamer);
                         }
-                        // The capture might have been closed internally (for example if the camera is disconnected)
+                        // The capture might have been closed internally (for example if the camera is
+                        // disconnected)
                         alive = !stopped.get() && !capture.isClosed();
                     }
                 } catch (IllegalStateException | IllegalArgumentException | IOException e) {
                     if (IO.isBrokenPipe(e)) {
-                        // Do not retry on broken pipe, which is expected on close because the socket is closed by the client
+                        // Do not retry on broken pipe, which is expected on close because the socket is
+                        // closed by the client
                         throw e;
                     }
                     Ln.e("Capture/encoding error: " + e.getClass().getName() + ": " + e.getMessage());
+                    e.printStackTrace(); // Print full stack trace for debugging
                     if (!prepareRetry(size)) {
                         throw e;
                     }
@@ -164,7 +168,8 @@ public class SurfaceEncoder implements AsyncProcessor {
             return false;
         }
 
-        // Downsizing on error is only enabled if an encoding failure occurs before the first frame (downsizing later could be surprising)
+        // Downsizing on error is only enabled if an encoding failure occurs before the
+        // first frame (downsizing later could be surprising)
 
         int newMaxSize = chooseMaxSizeFallback(currentSize);
         if (newMaxSize == 0) {
@@ -223,22 +228,26 @@ public class SurfaceEncoder implements AsyncProcessor {
         } while (!eos);
     }
 
-    private static MediaCodec createMediaCodec(Codec codec, String encoderName) throws IOException, ConfigurationException {
+    private static MediaCodec createMediaCodec(Codec codec, String encoderName)
+            throws IOException, ConfigurationException {
         if (encoderName != null) {
             Ln.d("Creating encoder by name: '" + encoderName + "'");
             try {
                 MediaCodec mediaCodec = MediaCodec.createByCodecName(encoderName);
                 String mimeType = Codec.getMimeType(mediaCodec);
                 if (!codec.getMimeType().equals(mimeType)) {
-                    Ln.e("Video encoder type for \"" + encoderName + "\" (" + mimeType + ") does not match codec type (" + codec.getMimeType() + ")");
+                    Ln.e("Video encoder type for \"" + encoderName + "\" (" + mimeType + ") does not match codec type ("
+                            + codec.getMimeType() + ")");
                     throw new ConfigurationException("Incorrect encoder type: " + encoderName);
                 }
                 return mediaCodec;
             } catch (IllegalArgumentException e) {
-                Ln.e("Video encoder '" + encoderName + "' for " + codec.getName() + " not found\n" + LogUtils.buildVideoEncoderListMessage());
+                Ln.e("Video encoder '" + encoderName + "' for " + codec.getName() + " not found\n"
+                        + LogUtils.buildVideoEncoderListMessage());
                 throw new ConfigurationException("Unknown encoder: " + encoderName);
             } catch (IOException e) {
-                Ln.e("Could not create video encoder '" + encoderName + "' for " + codec.getName() + "\n" + LogUtils.buildVideoEncoderListMessage());
+                Ln.e("Could not create video encoder '" + encoderName + "' for " + codec.getName() + "\n"
+                        + LogUtils.buildVideoEncoderListMessage());
                 throw e;
             }
         }
@@ -248,16 +257,19 @@ public class SurfaceEncoder implements AsyncProcessor {
             Ln.d("Using video encoder: '" + mediaCodec.getName() + "'");
             return mediaCodec;
         } catch (IOException | IllegalArgumentException e) {
-            Ln.e("Could not create default video encoder for " + codec.getName() + "\n" + LogUtils.buildVideoEncoderListMessage());
+            Ln.e("Could not create default video encoder for " + codec.getName() + "\n"
+                    + LogUtils.buildVideoEncoderListMessage());
             throw e;
         }
     }
 
-    private static MediaFormat createFormat(String videoMimeType, int bitRate, float maxFps, List<CodecOption> codecOptions) {
+    private static MediaFormat createFormat(String videoMimeType, int bitRate, float maxFps,
+            List<CodecOption> codecOptions) {
         MediaFormat format = new MediaFormat();
         format.setString(MediaFormat.KEY_MIME, videoMimeType);
         format.setInteger(MediaFormat.KEY_BIT_RATE, bitRate);
-        // must be present to configure the encoder, but does not impact the actual frame rate, which is variable
+        // must be present to configure the encoder, but does not impact the actual
+        // frame rate, which is variable
         format.setInteger(MediaFormat.KEY_FRAME_RATE, 60);
         format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
         if (Build.VERSION.SDK_INT >= AndroidVersions.API_24_ANDROID_7_0) {
@@ -295,7 +307,8 @@ public class SurfaceEncoder implements AsyncProcessor {
             try {
                 streamCapture();
             } catch (ConfigurationException e) {
-                // Do not print stack trace, a user-friendly error-message has already been logged
+                // Do not print stack trace, a user-friendly error-message has already been
+                // logged
             } catch (IOException e) {
                 // Broken pipe is expected on close, because the socket is closed by the client
                 if (!IO.isBrokenPipe(e)) {

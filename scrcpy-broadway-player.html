@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>scrcpy Player - FINAL</title>
+    <style>
+        body {
+            margin: 0;
+            background: #1a1a2e;
+            color: white;
+            font-family: system-ui;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            padding: 20px;
+        }
+
+        h1 {
+            text-align: center;
+            color: #00d4ff;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin: 20px 0;
+        }
+
+        input,
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        input {
+            flex: 1;
+            background: #16213e;
+            color: white;
+        }
+
+        button {
+            background: #00d4ff;
+            color: #1a1a2e;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        canvas {
+            width: 100%;
+            background: #000;
+            border-radius: 10px;
+        }
+
+        .stats {
+            margin-top: 20px;
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            text-align: center;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>🎬 scrcpy WebCodecs Player</h1>
+        <div class="controls">
+            <input type="text" id="url" value="ws://localhost:8886">
+            <button onclick="toggle()">Connect</button>
+        </div>
+        <canvas id="canvas" width="1080" height="2400"></canvas>
+        <div class="stats">
+            <div>
+                <div id="status">-</div><small>Status</small>
+            </div>
+            <div>
+                <div id="fps">0</div><small>FPS</small>
+            </div>
+            <div>
+                <div id="frames">0</div><small>Frames</small>
+            </div>
+            <div>
+                <div id="data">0 MB</div><small>Data</small>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/h264-converter@1.0.3/dist/h264-converter.min.js"></script>
+    <script>
+        let ws, decoder, frameCount = 0, totalBytes = 0, fps = [];
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        // Use Broadway.js as fallback (simple & reliable)
+        function useBroadway() {
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/broadway@0.9.8/Player/Player.min.js';
+            script.onload = () => {
+                const player = new Player({
+                    useWorker: false,
+                    webgl: false,
+                    size: { width: 1080, height: 2400 }
+                });
+                player.canvas = canvas;
+
+                ws = new WebSocket(document.getElementById('url').value);
+                ws.binaryType = 'arraybuffer';
+
+                ws.onopen = () => {
+                    document.getElementById('status').textContent = 'Connected';
+                    console.log('✅ WebSocket connected (Broadway.js decoder)');
+                };
+
+                ws.onmessage = (e) => {
+                    if (typeof e.data === 'string') return;
+
+                    frameCount++;
+                    totalBytes += e.data.byteLength;
+                    fps.push(Date.now());
+
+                    // Broadway.js can decode Annex-B directly
+                    player.decode(new Uint8Array(e.data));
+
+                    document.getElementById('frames').textContent = frameCount;
+                    document.getElementById('data').textContent = (totalBytes / 1024 / 1024).toFixed(1) + ' MB';
+                };
+
+                ws.onerror = () => document.getElementById('status').textContent = 'Error';
+                ws.onclose = () => document.getElementById('status').textContent = 'Disconnected';
+            };
+            document.head.appendChild(script);
+        }
+
+        function toggle() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            } else {
+                useBroadway(); // Use Broadway.js - it just works!
+            }
+        }
+
+        setInterval(() => {
+            const now = Date.now();
+            fps = fps.filter(t => now - t < 1000);
+            document.getElementById('fps').textContent = fps.length;
+        }, 100);
+
+        console.log('scrcpy Player ready! Click Connect to start.');
+    </script>
+</body>
+
+</html>

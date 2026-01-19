@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>scrcpy WebSocket Player - Simple H264</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            overflow: hidden;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            padding: 20px;
+        }
+
+        .header {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 20px;
+            border-radius: 15px 15px 0 0;
+            backdrop-filter: blur(10px);
+        }
+
+        h1 {
+            margin: 0 0 15px 0;
+            font-size: 28px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        input,
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        input {
+            flex: 1;
+            min-width: 200px;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+        }
+
+        button {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            cursor: pointer;
+            font-weight: bold;
+            transition: transform 0.2s;
+        }
+
+        button:hover {
+            transform: scale(1.05);
+        }
+
+        button.connected {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        }
+
+        .video-area {
+            flex: 1;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 0 0 15px 15px;
+            padding: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            backdrop-filter: blur(10px);
+        }
+
+        video {
+            max-width: 100%;
+            max-height: 100%;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+            background: #000;
+        }
+
+        .stats {
+            position: absolute;
+            top: 30px;
+            right: 30px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px 20px;
+            border-radius: 10px;
+            min-width: 200px;
+            font-size: 13px;
+        }
+
+        .stat {
+            display: flex;
+            justify-content: space-between;
+            margin: 5px 0;
+        }
+
+        .stat-label {
+            opacity: 0.7;
+        }
+
+        .stat-value {
+            font-weight: bold;
+        }
+
+        .status {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 5px;
+        }
+
+        .status.connected {
+            background: #4CAF50;
+            box-shadow: 0 0 10px #4CAF50;
+        }
+
+        .status.disconnected {
+            background: #F44336;
+        }
+
+        .overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            font-size: 18px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎬 scrcpy WebSocket Player</h1>
+            <div class="controls">
+                <input type="text" id="wsUrl" value="ws://localhost:8886" placeholder="WebSocket URL">
+                <button id="connectBtn" onclick="toggleConnection()">Connect</button>
+            </div>
+        </div>
+
+        <div class="video-area">
+            <video id="video" autoplay muted playsinline></video>
+            <div class="overlay" id="overlay">Click Connect to start streaming</div>
+
+            <div class="stats">
+                <div class="stat">
+                    <span class="stat-label">Status:</span>
+                    <span class="stat-value">
+                        <span class="status" id="statusDot"></span>
+                        <span id="statusText">Disconnected</span>
+                    </span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">FPS:</span>
+                    <span class="stat-value" id="fps">0</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Frames:</span>
+                    <span class="stat-value" id="frameCount">0</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Data:</span>
+                    <span class="stat-value" id="dataSize">0 MB</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Codec:</span>
+                    <span class="stat-value">H264</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let mediaSource = null;
+        let sourceBuffer = null;
+        let queue = [];
+        let frameCount = 0;
+        let totalBytes = 0;
+        let lastFrameTime = Date.now();
+        let frameTimestamps = [];
+
+        const video = document.getElementById('video');
+
+        function updateStats() {
+            const now = Date.now();
+            frameTimestamps = frameTimestamps.filter(t => now - t < 1000);
+
+            document.getElementById('fps').textContent = frameTimestamps.length;
+            document.getElementById('frameCount').textContent = frameCount;
+            document.getElementById('dataSize').textContent = (totalBytes / 1024 / 1024).toFixed(2) + ' MB';
+        }
+
+        function setStatus(connected, text) {
+            const dot = document.getElementById('statusDot');
+            const statusText = document.getElementById('statusText');
+            const btn = document.getElementById('connectBtn');
+
+            if (connected) {
+                dot.className = 'status connected';
+                statusText.textContent = text || 'Connected';
+                btn.textContent = 'Disconnect';
+                btn.className = 'connected';
+            } else {
+                dot.className = 'status disconnected';
+                statusText.textContent = text || 'Disconnected';
+                btn.textContent = 'Connect';
+                btn.className = '';
+            }
+        }
+
+        function showOverlay(text) {
+            const overlay = document.getElementById('overlay');
+            overlay.textContent = text;
+            overlay.style.display = 'block';
+        }
+
+        function hideOverlay() {
+            document.getElementById('overlay').style.display = 'none';
+        }
+
+        function toggleConnection() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                disconnect();
+            } else {
+                connect();
+            }
+        }
+
+        function connect() {
+            const url = document.getElementById('wsUrl').value;
+
+            showOverlay('Connecting...');
+            setStatus(false, 'Connecting...');
+
+            // Initialize MediaSource for H264 playback
+            if ('MediaSource' in window) {
+                mediaSource = new MediaSource();
+                video.src = URL.createObjectURL(mediaSource);
+
+                mediaSource.addEventListener('sourceopen', () => {
+                    try {
+                        sourceBuffer = mediaSource.addSourceBuffer('video/mp4; codecs="avc1.42E01E"');
+                        sourceBuffer.mode = 'sequence';
+
+                        sourceBuffer.addEventListener('updateend', () => {
+                            if (queue.length > 0 && !sourceBuffer.updating) {
+                                sourceBuffer.appendBuffer(queue.shift());
+                            }
+                        });
+
+                        console.log('✅ MediaSource initialized');
+                    } catch (e) {
+                        console.error('MediaSource error:', e);
+                        alert('Your browser may not support H264 playback. Try Chrome or Edge.');
+                        return;
+                    }
+                });
+            } else {
+                alert('MediaSource API not supported in this browser!');
+                return;
+            }
+
+            // Connect WebSocket
+            ws = new WebSocket(url);
+            ws.binaryType = 'arraybuffer';
+
+            ws.onopen = () => {
+                console.log('✅ WebSocket connected');
+                setStatus(true, 'Connected');
+                showOverlay('Waiting for video...');
+            };
+
+            ws.onmessage = (event) => {
+                if (typeof event.data === 'string') {
+                    try {
+                        const info = JSON.parse(event.data);
+                        console.log('Device info:', info);
+                        if (info.device) {
+                            setStatus(true, `${info.device.manufacturer} ${info.device.model}`);
+                        }
+                    } catch (e) {
+                        console.warn('Failed to parse message:', event.data);
+                    }
+                } else {
+                    // Binary H264 data
+                    frameCount++;
+                    totalBytes += event.data.byteLength;
+                    frameTimestamps.push(Date.now());
+
+                    if (frameCount === 1) {
+                        hideOverlay();
+                    }
+
+                    // Append to MediaSource
+                    if (sourceBuffer && !sourceBuffer.updating) {
+                        try {
+                            sourceBuffer.appendBuffer(event.data);
+                        } catch (e) {
+                            queue.push(event.data);
+                        }
+                    } else {
+                        queue.push(event.data);
+                    }
+
+                    updateStats();
+                }
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                setStatus(false, 'Error');
+                showOverlay('Connection error - Check server is running');
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket closed');
+                setStatus(false, 'Disconnected');
+                showOverlay('Disconnected');
+                ws = null;
+            };
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+            }
+            if (mediaSource && mediaSource.readyState === 'open') {
+                mediaSource.endOfStream();
+            }
+            video.src = '';
+            showOverlay('Disconnected');
+        }
+
+        // Update stats every 100ms
+        setInterval(updateStats, 100);
+
+        console.log('scrcpy WebSocket Player ready!');
+        console.log('Using MediaSource API for H264 playback');
+    </script>
+</body>
+
+</html>

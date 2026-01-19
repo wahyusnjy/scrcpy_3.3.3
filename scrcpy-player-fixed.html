@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>scrcpy Video Player - FIXED</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
+            color: white;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            width: 100%;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .controls {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            padding: 20px;
+            border-radius: 15px;
+            margin-bottom: 20px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        input {
+            flex: 1;
+            padding: 12px 20px;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.05);
+            color: white;
+            font-size: 16px;
+            transition: all 0.3s;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        button {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 10px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        button:hover {
+            transform: scale(1.05);
+        }
+
+        button:active {
+            transform: scale(0.95);
+        }
+
+        .video-container {
+            background: #000;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            position: relative;
+            margin-bottom: 20px;
+        }
+
+        canvas {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            font-size: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 30px;
+            border-radius: 15px;
+            backdrop-filter: blur(10px);
+        }
+
+        .stats {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            padding: 20px;
+            border-radius: 15px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+        }
+
+        .stat {
+            text-align: center;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            opacity: 0.7;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .stat-value {
+            font-size: 28px;
+            font-weight: bold;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .status-connected {
+            color: #00ff88 !important;
+            -webkit-text-fill-color: #00ff88 !important;
+        }
+
+        .status-disconnected {
+            color: #ff0055 !important;
+            -webkit-text-fill-color: #ff0055 !important;
+        }
+
+        .alert {
+            background: rgba(255, 100, 100, 0.2);
+            border: 2px solid rgba(255, 100, 100, 0.5);
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .success {
+            background: rgba(0, 255, 136, 0.2);
+            border-color: rgba(0, 255, 136, 0.5);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>🎬 scrcpy Player - FIXED</h1>
+
+        <div id="alert" style="display: none;"></div>
+
+        <div class="controls">
+            <input type="text" id="wsUrl" value="ws://localhost:8886" placeholder="WebSocket URL">
+            <button id="connectBtn" onclick="toggleConnection()">Connect</button>
+        </div>
+
+        <div class="video-container">
+            <canvas id="videoCanvas" width="1080" height="2400"></canvas>
+            <div class="overlay" id="overlay">
+                Click Connect to start streaming
+            </div>
+        </div>
+
+        <div class="stats">
+            <div class="stat">
+                <div class="stat-label">Status</div>
+                <div class="stat-value" id="status">Disconnected</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Decoded Frames</div>
+                <div class="stat-value" id="frameCount">0</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">FPS</div>
+                <div class="stat-value" id="fps">0</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Data Received</div>
+                <div class="stat-value" id="dataSize">0 MB</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Decoder State</div>
+                <div class="stat-value" id="decoderState">-</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Device</div>
+                <div class="stat-value" id="device">-</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let decoder = null;
+        let frameCount = 0;
+        let totalBytes = 0;
+        let frameTimestamps = [];
+        let sps = null;
+        let pps = null;
+        let decoderConfigured = false;
+        const canvas = document.getElementById('videoCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Check WebCodecs support
+        if (!('VideoDecoder' in window)) {
+            showAlert('❌ WebCodecs API not supported in this browser. Please use Chrome, Edge, or Opera.', false);
+        }
+
+        function showAlert(message, isSuccess) {
+            const alert = document.getElementById('alert');
+            alert.textContent = message;
+            alert.className = isSuccess ? 'alert success' : 'alert';
+            alert.style.display = 'block';
+            setTimeout(() => {
+                alert.style.display = 'none';
+            }, 5000);
+        }
+
+        function updateStats() {
+            const now = Date.now();
+            frameTimestamps = frameTimestamps.filter(t => now - t < 1000);
+
+            document.getElementById('frameCount').textContent = frameCount;
+            document.getElementById('fps').textContent = frameTimestamps.length;
+            document.getElementById('dataSize').textContent = (totalBytes / 1024 / 1024).toFixed(2) + ' MB';
+            if (decoder) {
+                document.getElementById('decoderState').textContent = decoderConfigured ? '✓ Ready' : 'Waiting';
+            }
+        }
+
+        function setStatus(connected, text) {
+            const statusEl = document.getElementById('status');
+            const btn = document.getElementById('connectBtn');
+
+            if (connected) {
+                statusEl.textContent = text || 'Connected';
+                statusEl.className = 'stat-value status-connected';
+                btn.textContent = 'Disconnect';
+            } else {
+                statusEl.textContent = text || 'Disconnected';
+                statusEl.className = 'stat-value status-disconnected';
+                btn.textContent = 'Connect';
+            }
+        }
+
+        function showOverlay(text) {
+            document.getElementById('overlay').textContent = text;
+            document.getElementById('overlay').style.display = 'block';
+        }
+
+        function hideOverlay() {
+            document.getElementById('overlay').style.display = 'none';
+        }
+
+        function parseH264NALUnits(data) {
+            const nalUnits = [];
+            const view = new Uint8Array(data);
+            let i = 0;
+
+            while (i < view.length - 4) {
+                if (view[i] === 0 && view[i + 1] === 0 && view[i + 2] === 0 && view[i + 3] === 1) {
+                    let start = i + 4;
+                    i += 4;
+
+                    while (i < view.length - 4) {
+                        if (view[i] === 0 && view[i + 1] === 0 && view[i + 2] === 0 && view[i + 3] === 1) {
+                            nalUnits.push(view.slice(start, i));
+                            break;
+                        }
+                        i++;
+                    }
+
+                    if (i >= view.length - 4) {
+                        nalUnits.push(view.slice(start));
+                        break;
+                    }
+                } else {
+                    i++;
+                }
+            }
+
+            return nalUnits;
+        }
+
+        function initDecoder() {
+            if (!('VideoDecoder' in window)) {
+                return false;
+            }
+
+            decoder = new VideoDecoder({
+                output: (frame) => {
+                    try {
+                        canvas.width = frame.displayWidth;
+                        canvas.height = frame.displayHeight;
+                        ctx.drawImage(frame, 0, 0);
+
+                        frameCount++;
+                        frameTimestamps.push(Date.now());
+
+                        frame.close();
+
+                        if (frameCount === 1) {
+                            hideOverlay();
+                            showAlert('✅ Video streaming successfully!', true);
+                        }
+                    } catch (e) {
+                        console.error('Error rendering frame:', e);
+                    }
+                },
+                error: (e) => {
+                    console.error('Decoder error:', e);
+                    showAlert('❌ Decoder error: ' + e.message, false);
+                }
+            });
+
+            return true;
+        }
+
+        function configureDecoderWithSPSPPS() {
+            if (!decoder || !sps || !pps) {
+                return false;
+            }
+
+            try {
+                // Combine SPS and PPS into description
+                const description = new Uint8Array(sps.length + pps.length);
+                description.set(sps, 0);
+                description.set(pps, sps.length);
+
+                decoder.configure({
+                    codec: 'avc1.42E01E',
+                    optimizeForLatency: true,
+                    description: description
+                });
+
+                decoderConfigured = true;
+                console.log('✅ Decoder configured with SPS/PPS', { spsLen: sps.length, ppsLen: pps.length });
+                showOverlay('Decoder ready, waiting for keyframe...');
+                return true;
+            } catch (e) {
+                console.error('Failed to configure decoder:', e);
+                showAlert('❌ Config failed: ' + e.message, false);
+                return false;
+            }
+        }
+
+        function decodeH264Data(arrayBuffer) {
+            if (!decoder) {
+                return;
+            }
+
+            const nalUnits = parseH264NALUnits(arrayBuffer);
+
+            for (const nalUnit of nalUnits) {
+                if (nalUnit.length === 0) continue;
+
+                const nalType = nalUnit[0] & 0x1F;
+
+                // Extract SPS (7) and PPS (8)
+                if (nalType === 7) {
+                    sps = nalUnit;
+                    console.log('✅ SPS received, length:', sps.length);
+                    if (pps) configureDecoderWithSPSPPS();
+                    continue;
+                } else if (nalType === 8) {
+                    pps = nalUnit;
+                    console.log('✅ PPS received, length:', pps.length);
+                    if (sps) configureDecoderWithSPSPPS();
+                    continue;
+                }
+
+                // Only decode frames after configured
+                if (!decoderConfigured || decoder.state !== 'configured') {
+                    continue;
+                }
+
+                const isKeyFrame = (nalType === 5); // IDR frame
+
+                try {
+                    const chunk = new EncodedVideoChunk({
+                        type: isKeyFrame ? 'key' : 'delta',
+                        timestamp: performance.now() * 1000,
+                        data: nalUnit
+                    });
+
+                    decoder.decode(chunk);
+                } catch (e) {
+                    if (isKeyFrame) {
+                        console.error('Failed to decode keyframe:', e);
+                    }
+                }
+            }
+        }
+
+        function toggleConnection() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                disconnect();
+            } else {
+                connect();
+            }
+        }
+
+        function connect() {
+            const url = document.getElementById('wsUrl').value;
+
+            if (!initDecoder()) {
+                showAlert('❌ WebCodecs not supported!', false);
+                return;
+            }
+
+            showOverlay('Connecting...');
+            setStatus(false, 'Connecting...');
+
+            ws = new WebSocket(url);
+            ws.binaryType = 'arraybuffer';
+
+            ws.onopen = () => {
+                console.log('✅ WebSocket connected');
+                setStatus(true, 'Connected');
+                showOverlay('Waiting for SPS/PPS...');
+            };
+
+            ws.onmessage = (event) => {
+                if (typeof event.data === 'string') {
+                    try {
+                        const info = JSON.parse(event.data);
+                        if (info.device) {
+                            document.getElementById('device').textContent =
+                                info.device.manufacturer + ' ' + info.device.model;
+                            setStatus(true, info.device.model);
+                        }
+                    } catch (e) {
+                        console.warn('Failed to parse JSON:', event.data);
+                    }
+                } else if (event.data instanceof ArrayBuffer) {
+                    totalBytes += event.data.byteLength;
+                    decodeH264Data(event.data);
+                    updateStats();
+                }
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                setStatus(false, 'Error');
+                showOverlay('Connection error');
+                showAlert('❌ Connection error', false);
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket closed');
+                setStatus(false, 'Disconnected');
+                showOverlay('Disconnected');
+                ws = null;
+
+                if (decoder) {
+                    decoder.close();
+                    decoder = null;
+                }
+                decoderConfigured = false;
+                sps = null;
+                pps = null;
+            };
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+            }
+        }
+
+        // Update stats every 100ms
+        setInterval(updateStats, 100);
+
+        console.log('✅ scrcpy Player ready! (SPS/PPS extraction enabled)');
+    </script>
+</body>
+
+</html>

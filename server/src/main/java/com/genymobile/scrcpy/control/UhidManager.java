@@ -56,6 +56,9 @@ public final class UhidManager {
     }
 
     public void open(int id, int vendorId, int productId, String name, byte[] reportDesc) throws IOException {
+        Ln.i("Opening UHID device: id=" + id + ", name=" + name + ", vid=0x" + Integer.toHexString(vendorId) +
+                ", pid=0x" + Integer.toHexString(productId));
+
         try {
             FileDescriptor fd = Os.open("/dev/uhid", OsConstants.O_RDWR, 0);
             try {
@@ -69,45 +72,59 @@ public final class UhidManager {
                 }
 
                 String phys = mustUseInputPort() ? INPUT_PORT : null;
+                Ln.i("UHID device phys port: " + (phys != null ? phys : "none (pre-Android 15 mode)"));
+                Ln.i("displayUniqueId: " + (displayUniqueId != null ? displayUniqueId : "null"));
+
                 byte[] req = buildUhidCreate2Req(vendorId, productId, name, reportDesc, phys);
                 Os.write(fd, req, 0, req.length);
+                Ln.i("UHID CREATE2 request sent successfully");
 
                 if (firstDevice) {
+                    Ln.i("First UHID device - adding unique ID association");
                     addUniqueIdAssociation();
                 }
                 registerUhidListener(id, fd);
+                Ln.i("UHID device registered: " + name);
             } catch (Exception e) {
+                Ln.e("Failed to setup UHID device", e);
                 close(fd);
                 throw e;
             }
         } catch (ErrnoException e) {
+            Ln.e("Failed to open /dev/uhid: " + e.getMessage());
             throw new IOException(e);
         }
     }
 
     private void registerUhidListener(int id, FileDescriptor fd) {
         if (Build.VERSION.SDK_INT >= AndroidVersions.API_23_ANDROID_6_0) {
-            queue.addOnFileDescriptorEventListener(fd, MessageQueue.OnFileDescriptorEventListener.EVENT_INPUT, (fd2, events) -> {
-                try {
-                    buffer.clear();
-                    int r = Os.read(fd2, buffer);
-                    buffer.flip();
-                    if (r > 0) {
-                        int type = buffer.getInt();
-                        if (type == UHID_OUTPUT) {
-                            byte[] data = extractHidOutputData(buffer);
-                            if (data != null) {
-                                DeviceMessage msg = DeviceMessage.createUhidOutput(id, data);
-                                sender.send(msg);
+            queue.addOnFileDescriptorEventListener(fd, MessageQueue.OnFileDescriptorEventListener.EVENT_INPUT,
+                    (fd2, events) -> {
+                        try {
+                            buffer.clear();
+                            int r = Os.read(fd2, buffer);
+                            buffer.flip();
+                            if (r > 0) {
+                                int type = buffer.getInt();
+                                if (type == UHID_OUTPUT) {
+                                    byte[] data = extractHidOutputData(buffer);
+                                    if (data != null) {
+                                        // Null check for sender (WebSocket mode doesn't use DeviceMessageSender)
+                                        if (sender != null) {
+                                            DeviceMessage msg = DeviceMessage.createUhidOutput(id, data);
+                                            sender.send(msg);
+                                        } else {
+                                            Ln.d("UHID output received but no sender (WebSocket mode)");
+                                        }
+                                    }
+                                }
                             }
+                        } catch (ErrnoException | InterruptedIOException e) {
+                            Ln.e("Failed to read UHID output", e);
+                            return 0;
                         }
-                    }
-                } catch (ErrnoException | InterruptedIOException e) {
-                    Ln.e("Failed to read UHID output", e);
-                    return 0;
-                }
-                return events;
-            });
+                        return events;
+                    });
         }
     }
 
@@ -121,15 +138,15 @@ public final class UhidManager {
         /*
          * #define UHID_DATA_MAX 4096
          * struct uhid_event {
-         *     uint32_t type;
-         *     union {
-         *         // ...
-         *         struct uhid_output_req {
-         *             __u8 data[UHID_DATA_MAX];
-         *             __u16 size;
-         *             __u8 rtype;
-         *         };
-         *     };
+         * uint32_t type;
+         * union {
+         * // ...
+         * struct uhid_output_req {
+         * __u8 data[UHID_DATA_MAX];
+         * __u16 size;
+         * __u8 rtype;
+         * };
+         * };
          * } __attribute__((__packed__));
          */
 
@@ -162,25 +179,26 @@ public final class UhidManager {
         }
     }
 
-    private static byte[] buildUhidCreate2Req(int vendorId, int productId, String name, byte[] reportDesc, String phys) {
+    private static byte[] buildUhidCreate2Req(int vendorId, int productId, String name, byte[] reportDesc,
+            String phys) {
         /*
          * struct uhid_event {
-         *     uint32_t type;
-         *     union {
-         *         // ...
-         *         struct uhid_create2_req {
-         *             uint8_t name[128];
-         *             uint8_t phys[64];
-         *             uint8_t uniq[64];
-         *             uint16_t rd_size;
-         *             uint16_t bus;
-         *             uint32_t vendor;
-         *             uint32_t product;
-         *             uint32_t version;
-         *             uint32_t country;
-         *             uint8_t rd_data[HID_MAX_DESCRIPTOR_SIZE];
-         *         };
-         *     };
+         * uint32_t type;
+         * union {
+         * // ...
+         * struct uhid_create2_req {
+         * uint8_t name[128];
+         * uint8_t phys[64];
+         * uint8_t uniq[64];
+         * uint16_t rd_size;
+         * uint16_t bus;
+         * uint32_t vendor;
+         * uint32_t product;
+         * uint32_t version;
+         * uint32_t country;
+         * uint8_t rd_data[HID_MAX_DESCRIPTOR_SIZE];
+         * };
+         * };
          * } __attribute__((__packed__));
          */
 
@@ -214,14 +232,14 @@ public final class UhidManager {
     private static byte[] buildUhidInput2Req(byte[] data) {
         /*
          * struct uhid_event {
-         *     uint32_t type;
-         *     union {
-         *         // ...
-         *         struct uhid_input2_req {
-         *             uint16_t size;
-         *             uint8_t data[UHID_DATA_MAX];
-         *         };
-         *     };
+         * uint32_t type;
+         * union {
+         * // ...
+         * struct uhid_input2_req {
+         * uint16_t size;
+         * uint8_t data[UHID_DATA_MAX];
+         * };
+         * };
          * } __attribute__((__packed__));
          */
 
@@ -234,7 +252,8 @@ public final class UhidManager {
 
     public void close(int id) {
         // Linux: Documentation/hid/uhid.rst
-        // If you close() the fd, the device is automatically unregistered and destroyed internally.
+        // If you close() the fd, the device is automatically unregistered and destroyed
+        // internally.
         FileDescriptor fd = fds.remove(id);
         if (fd != null) {
             unregisterUhidListener(fd);

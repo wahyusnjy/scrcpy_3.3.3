@@ -40,7 +40,8 @@ public final class Server {
 
     static {
         String[] classPaths = System.getProperty("java.class.path").split(File.pathSeparator);
-        // By convention, scrcpy is always executed with the absolute path of scrcpy-server.jar as the first item in the classpath
+        // By convention, scrcpy is always executed with the absolute path of
+        // scrcpy-server.jar as the first item in the classpath
         SERVER_PATH = classPaths[0];
     }
 
@@ -68,7 +69,8 @@ public final class Server {
     }
 
     private static void scrcpy(Options options) throws IOException, ConfigurationException {
-        if (Build.VERSION.SDK_INT < AndroidVersions.API_31_ANDROID_12 && options.getVideoSource() == VideoSource.CAMERA) {
+        if (Build.VERSION.SDK_INT < AndroidVersions.API_31_ANDROID_12
+                && options.getVideoSource() == VideoSource.CAMERA) {
             Ln.e("Camera mirroring is not supported before Android 12");
             throw new ConfigurationException("Camera mirroring is not supported");
         }
@@ -101,7 +103,8 @@ public final class Server {
 
         List<AsyncProcessor> asyncProcessors = new ArrayList<>();
 
-        DesktopConnection connection = DesktopConnection.open(scid, tunnelForward, video, audio, control, sendDummyByte);
+        DesktopConnection connection = DesktopConnection.open(scid, tunnelForward, video, audio, control,
+                sendDummyByte);
         try {
             if (options.getSendDeviceMeta()) {
                 connection.sendDeviceMeta(Device.getDeviceName());
@@ -125,7 +128,8 @@ public final class Server {
                     audioCapture = new AudioPlaybackCapture(options.getAudioDup());
                 }
 
-                Streamer audioStreamer = new Streamer(connection.getAudioFd(), audioCodec, options.getSendCodecMeta(), options.getSendFrameMeta());
+                Streamer audioStreamer = new Streamer(connection.getAudioFd(), audioCodec, options.getSendCodecMeta(),
+                        options.getSendFrameMeta());
                 AsyncProcessor audioRecorder;
                 if (audioCodec == AudioCodec.RAW) {
                     audioRecorder = new AudioRawRecorder(audioCapture, audioStreamer);
@@ -136,7 +140,8 @@ public final class Server {
             }
 
             if (video) {
-                Streamer videoStreamer = new Streamer(connection.getVideoFd(), options.getVideoCodec(), options.getSendCodecMeta(),
+                Streamer videoStreamer = new Streamer(connection.getVideoFd(), options.getVideoCodec(),
+                        options.getSendCodecMeta(),
                         options.getSendFrameMeta());
                 SurfaceCapture surfaceCapture;
                 if (options.getVideoSource() == VideoSource.DISPLAY) {
@@ -217,8 +222,10 @@ public final class Server {
             Ln.e(t.getMessage(), t);
             status = 1;
         } finally {
-            // By default, the Java process exits when all non-daemon threads are terminated.
-            // The Android SDK might start some non-daemon threads internally, preventing the scrcpy server to exit.
+            // By default, the Java process exits when all non-daemon threads are
+            // terminated.
+            // The Android SDK might start some non-daemon threads internally, preventing
+            // the scrcpy server to exit.
             // So force the process to exit explicitly.
             System.exit(status);
         }
@@ -236,7 +243,8 @@ public final class Server {
         Ln.disableSystemStreams();
         Ln.initLogLevel(options.getLogLevel());
 
-        Ln.i("Device: [" + Build.MANUFACTURER + "] " + Build.BRAND + " " + Build.MODEL + " (Android " + Build.VERSION.RELEASE + ")");
+        Ln.i("Device: [" + Build.MANUFACTURER + "] " + Build.BRAND + " " + Build.MODEL + " (Android "
+                + Build.VERSION.RELEASE + ")");
 
         if (options.getList()) {
             if (options.getCleanup()) {
@@ -263,10 +271,41 @@ public final class Server {
             return;
         }
 
+        // Check server mode and start appropriate server
+        if (options.getServerMode() == Options.SERVER_MODE_WEBSOCKET) {
+            startWebSocketMode(options);
+        } else {
+            // Original socket mode
+            try {
+                scrcpy(options);
+            } catch (ConfigurationException e) {
+                // Do not print stack trace, a user-friendly error-message has already been
+                // logged
+            }
+        }
+    }
+
+    private static void startWebSocketMode(Options options) {
+        Ln.i("Starting WebSocket server mode on port " + options.getWSPort());
+
+        // Initialize Workarounds on the main thread before starting any services
+        // This is critical for video encoding and UHID to work properly
+        Workarounds.apply();
+
         try {
-            scrcpy(options);
-        } catch (ConfigurationException e) {
-            // Do not print stack trace, a user-friendly error-message has already been logged
+            com.genymobile.scrcpy.websocket.WSServer wsServer = new com.genymobile.scrcpy.websocket.WSServer(options);
+            wsServer.setReuseAddr(true);
+            wsServer.start();
+
+            Ln.i("WebSocket server started successfully");
+
+            // Keep server running
+            // The server will handle connections in its own threads
+            Looper.loop();
+
+        } catch (Exception e) {
+            Ln.e("Failed to start WebSocket server", e);
+            System.exit(1);
         }
     }
 }
