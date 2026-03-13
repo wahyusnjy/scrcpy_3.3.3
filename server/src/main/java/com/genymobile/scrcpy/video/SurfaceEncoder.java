@@ -62,6 +62,23 @@ public class SurfaceEncoder implements AsyncProcessor {
         this.downsizeOnError = options.getDownsizeOnError();
     }
 
+    public void requestKeyFrame() {
+        if (stopped.get()) {
+            return;
+        }
+        MediaCodec mediaCodec = reset.getRunningMediaCodec();
+        if (mediaCodec != null) {
+            try {
+                android.os.Bundle b = new android.os.Bundle();
+                b.putInt(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0);
+                mediaCodec.setParameters(b);
+            } catch (IllegalStateException e) {
+                // The codec might be in a state where it can't accept parameters
+                Ln.w("Could not request keyframe: " + e.getMessage());
+            }
+        }
+    }
+
     private void streamCapture() throws IOException, ConfigurationException {
         Codec codec = streamer.getCodec();
         MediaCodec mediaCodec = createMediaCodec(codec, encoderName);

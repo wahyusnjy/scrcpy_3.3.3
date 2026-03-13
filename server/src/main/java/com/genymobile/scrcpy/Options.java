@@ -410,12 +410,23 @@ public class Options {
                 boolean keyboardUhid = Boolean.parseBoolean(args[7]);
                 options.setKeyboardUhid(keyboardUhid);
             }
+            // Video bitrate (bps), e.g. 8000000 = 8 Mbps
+            if (args.length > 8) {
+                int bitRate = Integer.parseInt(args[8]);
+                if (bitRate > 0) {
+                    options.videoBitRate = bitRate;
+                    Ln.i("Video bitrate set to: " + bitRate + " bps");
+                } else {
+                    Ln.w("Invalid bitrate '" + args[8] + "', using default: " + options.videoBitRate + " bps");
+                }
+            }
 
             Ln.i("WebSocket server mode enabled - port=" + options.getWSPort() +
                     ", listenAll=" + options.getWSListenOnAllInterfaces() +
                     ", codec=" + options.videoCodec.getName() +
                     ", mouseUhid=" + options.getMouseUhid() +
-                    ", keyboardUhid=" + options.getKeyboardUhid());
+                    ", keyboardUhid=" + options.getKeyboardUhid() +
+                    ", videoBitRate=" + options.getVideoBitRate() + " bps");
 
             return options;
         }

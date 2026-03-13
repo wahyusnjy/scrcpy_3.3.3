@@ -2,32 +2,37 @@ package com.genymobile.scrcpy.video;
 
 import android.media.MediaCodec;
 
-import java.util.concurrent.atomic.AtomicBoolean;
-
 public class CaptureReset implements SurfaceCapture.CaptureListener {
 
-    private final AtomicBoolean reset = new AtomicBoolean();
-
-    // Current instance of MediaCodec to "interrupt" on reset
+    private boolean reset;
     private MediaCodec runningMediaCodec;
 
-    public boolean consumeReset() {
-        return reset.getAndSet(false);
+    // Tambahkan method ini untuk memperbaiki error "cannot find symbol" di
+    // SurfaceEncoder
+    public synchronized MediaCodec getRunningMediaCodec() {
+        return runningMediaCodec;
+    }
+
+    public synchronized void setRunningMediaCodec(MediaCodec codec) {
+        this.runningMediaCodec = codec;
+    }
+
+    public synchronized boolean consumeReset() {
+        boolean r = reset;
+        reset = false;
+        return r;
     }
 
     public synchronized void reset() {
-        reset.set(true);
+        reset = true;
         if (runningMediaCodec != null) {
             try {
+                // Memberi tahu encoder untuk berhenti memproses input secepat mungkin
                 runningMediaCodec.signalEndOfInputStream();
             } catch (IllegalStateException e) {
-                // ignore
+                // MediaCodec mungkin sudah berhenti atau dalam keadaan error, abaikan
             }
         }
-    }
-
-    public synchronized void setRunningMediaCodec(MediaCodec runningMediaCodec) {
-        this.runningMediaCodec = runningMediaCodec;
     }
 
     @Override
