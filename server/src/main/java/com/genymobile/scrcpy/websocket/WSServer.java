@@ -31,7 +31,7 @@ public class WSServer extends WebSocketServer {
 
     public static final class SocketInfo {
         private static final HashSet<Short> INSTANCES_BY_ID = new HashSet<>();
-        private final short id;
+    private final short id;
         private WebSocketConnection connection;
 
         SocketInfo(short id) {
