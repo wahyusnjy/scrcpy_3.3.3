@@ -96,17 +96,24 @@ public class WebSocketConnection {
             } else {
                 Ln.i("⚠️  Cache empty – waiting for next keyframe");
             }
-            // Request a fresh keyframe after short delay so decoder can init from SPS/PPS
+            // Request keyframe baru — coba beberapa kali karena MediaCodec beberapa device
+            // tidak menjamin langsung merespons requestKeyFrame() pertama.
+            // Dengan 5x percobaan/2 detik, client hampir pasti dapat I-frame <2s.
             final WebSocketVideoStreamer streamer = videoStreamer;
             new Thread(() -> {
-                try {
-                    Thread.sleep(150);
-                } catch (InterruptedException ignored) {
+                for (int attempt = 0; attempt < 5; attempt++) {
+                    try {
+                        // attempt 0 = 0ms delay (segera), attempt 1..4 = +400ms setiap kali
+                        if (attempt > 0) Thread.sleep(400);
+                    } catch (InterruptedException ignored) {
+                        break;
+                    }
+                    if (streamer != null) {
+                        Ln.i("🔑 Keyframe request attempt " + (attempt + 1) + "/5 for new client");
+                        streamer.requestKeyframe();
+                    }
                 }
-                if (streamer != null) {
-                    streamer.requestKeyframe();
-                }
-            }, "WS-KeyframeDelay").start();
+            }, "WS-KeyframeRetry").start();
         } else {
             Ln.w("Video is disabled in options!");
         }

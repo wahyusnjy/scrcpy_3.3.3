@@ -28,9 +28,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SurfaceEncoder implements AsyncProcessor {
 
-    private static final int DEFAULT_I_FRAME_INTERVAL = 10; // seconds
+    private static final int DEFAULT_I_FRAME_INTERVAL = 1; // seconds
     private static final int REPEAT_FRAME_DELAY_US = 100_000; // repeat after 100ms
     private static final String KEY_MAX_FPS_TO_ENCODER = "max-fps-to-encoder";
+    private ByteBuffer cachedConfig = null; // cache SPS+PPS
 
     // Keep the values in descending order
     private static final int[] MAX_SIZE_FALLBACK = { 2560, 1920, 1600, 1280, 1024, 800 };
@@ -79,6 +80,9 @@ public class SurfaceEncoder implements AsyncProcessor {
         }
     }
 
+    public ByteBuffer getCachedConfig() {
+        return cachedConfig;
+    }
     private void streamCapture() throws IOException, ConfigurationException {
         Codec codec = streamer.getCodec();
         MediaCodec mediaCodec = createMediaCodec(codec, encoderName);
@@ -229,8 +233,12 @@ public class SurfaceEncoder implements AsyncProcessor {
                     ByteBuffer codecBuffer = codec.getOutputBuffer(outputBufferId);
 
                     boolean isConfig = (bufferInfo.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0;
-                    if (!isConfig) {
-                        // If this is not a config packet, then it contains a frame
+                    if (isConfig) {
+                        cachedConfig = ByteBuffer.allocate(codecBuffer.remaining());
+                        cachedConfig.put(codecBuffer);
+                        cachedConfig.flip();
+                        codecBuffer.rewind();
+                    }else {
                         firstFrameSent = true;
                         consecutiveErrors = 0;
                     }
